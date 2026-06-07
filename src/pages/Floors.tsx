@@ -36,6 +36,7 @@ export default function Floors() {
   const [success, setSuccess] = useState('');
   const [history, setHistory] = useState<any>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
 
   // forms
   const [roomForm, setRoomForm] = useState({ name: '', floor: 1, area: '', base_rate: '', description: '' });
@@ -92,11 +93,11 @@ export default function Floors() {
     }
     if (m === 'history' && room) {
       setHistory(null);
+      setHistoryError('');
       setHistoryLoading(true);
-      roomsApi.fullHistory(room.id).then(data => {
-        setHistory(data);
-        setHistoryLoading(false);
-      }).catch(() => setHistoryLoading(false));
+      roomsApi.fullHistory(room.id)
+        .then(data => { setHistory(data); setHistoryLoading(false); })
+        .catch(e => { setHistoryError(e?.message || 'Ошибка загрузки'); setHistoryLoading(false); });
     }
   };
 
@@ -112,6 +113,7 @@ export default function Floors() {
       }
       setSuccess('Помещение сохранено');
       await load();
+      setTimeout(closeModal, 1200);
     } catch (e: any) { alert(e.response?.data?.detail || 'Ошибка'); }
     finally { setLoading(false); }
   };
@@ -129,6 +131,7 @@ export default function Floors() {
       setSuccess('Статус изменён');
       setSelected(null);
       await load();
+      setTimeout(closeModal, 1200);
     } catch (e: any) { alert(e.response?.data?.detail || 'Ошибка'); }
     finally { setLoading(false); }
   };
@@ -149,6 +152,7 @@ export default function Floors() {
       setSuccess('Договор создан, помещение переведено в «Занято»');
       setSelected(null);
       await load();
+      setTimeout(closeModal, 1500);
     } catch (e: any) {
       const d = e.response?.data?.detail;
       alert(typeof d === 'string' ? d : Array.isArray(d) ? d.map((x: any) => x.msg).join(', ') : 'Ошибка');
@@ -168,6 +172,7 @@ export default function Floors() {
       setSuccess('Договор расторгнут');
       setSelected(null);
       await load();
+      setTimeout(closeModal, 1500);
     } catch (e: any) { alert(e.response?.data?.detail || 'Ошибка'); }
     finally { setLoading(false); }
   };
@@ -179,78 +184,207 @@ export default function Floors() {
     load();
   };
 
+  // Статистика по текущему этажу
+  const floorOccupied = floorRooms.filter(r => r.status === 'occupied').length;
+  const floorFree = floorRooms.filter(r => r.status === 'free').length;
+  const floorArea = floorRooms.reduce((s, r) => s + r.area, 0);
+  const floorOccupiedArea = floorRooms.filter(r => r.status === 'occupied').reduce((s, r) => s + r.area, 0);
+  const floorPct = floorRooms.length > 0 ? Math.round(floorOccupied / floorRooms.length * 100) : 0;
+
   return (
     <div>
-      <div className="stats-grid stats-grid-3" style={{ marginBottom: 20 }}>
-        <div className="stat-card"><div className="stat-label">Свободно сейчас</div><div className="stat-value" style={{ color: '#16A34A' }}>{free}</div><div className="stat-sub">помещений</div></div>
-        <div className="stat-card"><div className="stat-label">Занято</div><div className="stat-value" style={{ color: '#1D4ED8' }}>{occupied}</div><div className="stat-sub">помещений</div></div>
-        <div className="stat-card"><div className="stat-label">Резерв + ремонт</div><div className="stat-value" style={{ color: '#D97706' }}>{other}</div><div className="stat-sub">помещений</div></div>
+      {/* Глобальная статистика */}
+      <div className="stats-grid" style={{ marginBottom: 20 }}>
+        <div className="stat-card">
+          <div className="stat-label">Всего помещений</div>
+          <div className="stat-value">{rooms.length}</div>
+          <div className="stat-sub">{rooms.reduce((s, r) => s + r.area, 0).toLocaleString('ru')} м² общая площадь</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Занято</div>
+          <div className="stat-value" style={{ color: '#1D4ED8' }}>{occupied}</div>
+          <div className="stat-sub">{rooms.length > 0 ? Math.round(occupied / rooms.length * 100) : 0}% заполняемость</div>
+          <span className="stat-badge badge-info">{rooms.filter(r=>r.status==='occupied').reduce((s,r)=>s+r.area,0).toLocaleString('ru')} м²</span>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Свободно</div>
+          <div className="stat-value" style={{ color: '#16A34A' }}>{free}</div>
+          <div className="stat-sub">помещений доступно</div>
+          <span className="stat-badge badge-up">{rooms.filter(r=>r.status==='free').reduce((s,r)=>s+r.area,0).toLocaleString('ru')} м²</span>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Резерв + ремонт</div>
+          <div className="stat-value" style={{ color: '#D97706' }}>{other}</div>
+          <div className="stat-sub">временно недоступно</div>
+          <span className="stat-badge badge-warn">{rooms.filter(r=>r.status==='reserved'||r.status==='repair').reduce((s,r)=>s+r.area,0).toLocaleString('ru')} м²</span>
+        </div>
       </div>
 
       <div className="card">
         <div className="card-header">
           <span className="card-title">Планировка этажей</span>
-          <button className="btn btn-primary" onClick={() => openModal('create-room')} title="Добавить новое помещение на текущий этаж">
-            <i className="ti ti-plus" /> Добавить помещение
-          </button>
-        </div>
-
-        <div className="floor-tabs">
-          {floors.map(f => (
-            <button key={f} className={'ftab' + (f === curFloor ? ' active' : '')}
-              onClick={() => { setCurFloor(f); setSelected(null); }}>
-              {f} этаж
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div className="floor-legend" style={{ marginBottom: 0 }}>
+              <div className="legend-item"><div className="legend-dot" style={{ background: '#DBEAFE', border: '2px solid #93C5FD' }} />Занято</div>
+              <div className="legend-item"><div className="legend-dot" style={{ background: '#DCFCE7', border: '2px solid #86EFAC' }} />Свободно</div>
+              <div className="legend-item"><div className="legend-dot" style={{ background: '#FEF3C7', border: '2px solid #FCD34D' }} />Резерв</div>
+              <div className="legend-item"><div className="legend-dot" style={{ background: '#FEE2E2', border: '2px solid #FCA5A5' }} />Ремонт</div>
+            </div>
+            <button className="btn btn-primary" onClick={() => openModal('create-room')}>
+              <i className="ti ti-plus" /> Добавить помещение
             </button>
-          ))}
+          </div>
         </div>
 
-        <div className="floor-legend">
-          <div className="legend-item"><div className="legend-dot" style={{ background: '#DBEAFE', border: '2px solid #93C5FD' }} />Занято</div>
-          <div className="legend-item"><div className="legend-dot" style={{ background: '#DCFCE7', border: '2px solid #86EFAC' }} />Свободно</div>
-          <div className="legend-item"><div className="legend-dot" style={{ background: '#FEF3C7', border: '2px solid #FCD34D' }} />Резерв</div>
-          <div className="legend-item"><div className="legend-dot" style={{ background: '#FEE2E2', border: '2px solid #FCA5A5' }} />Ремонт</div>
-        </div>
-
-        {floorRooms.length === 0
-          ? <div className="empty-state">Нет помещений на этом этаже — добавьте первое</div>
-          : (
-            <div className="floor-grid">
-              {floorRooms.map(room => (
-                <div key={room.id}
-                  className={`room ${statusClass[room.status] || 's-free'}${selected?.id === room.id ? ' ring' : ''}`}
-                  style={selected?.id === room.id ? { outline: '2px solid #2563EB' } : {}}
-                  onClick={() => setSelected(selected?.id === room.id ? null : room)}>
-                  <div className="room-name">{room.name}</div>
-                  <div className="room-area">{room.area} м²</div>
-                  <div className="room-status-pill">{statusLabel[room.status]}</div>
+        {/* Табы этажей */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          {floors.map(f => {
+            const fRooms = rooms.filter(r => r.floor === f);
+            const fOcc = fRooms.filter(r => r.status === 'occupied').length;
+            const fPct = fRooms.length > 0 ? Math.round(fOcc / fRooms.length * 100) : 0;
+            const isActive = f === curFloor;
+            return (
+              <button key={f}
+                onClick={() => { setCurFloor(f); setSelected(null); }}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center',
+                  padding: '8px 16px', borderRadius: 10, cursor: 'pointer',
+                  border: `1.5px solid ${isActive ? '#1A2E4A' : '#E2E8F0'}`,
+                  background: isActive ? '#1A2E4A' : '#F8FAFC',
+                  transition: 'all .15s', minWidth: 80,
+                }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: isActive ? '#fff' : '#475569' }}>{f} этаж</span>
+                <span style={{ fontSize: 11, color: isActive ? '#93C5FD' : '#94A3B8', marginTop: 2 }}>{fOcc}/{fRooms.length} · {fPct}%</span>
+                <div style={{ width: '100%', height: 3, background: isActive ? 'rgba(255,255,255,.2)' : '#E2E8F0', borderRadius: 2, marginTop: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${fPct}%`, background: isActive ? '#3B82F6' : '#22C55E', borderRadius: 2 }} />
                 </div>
-              ))}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Статистика текущего этажа */}
+        {curFloor !== null && floorRooms.length > 0 && (
+          <div style={{ display: 'flex', gap: 12, marginBottom: 16, padding: '10px 14px', background: '#F8FAFC', borderRadius: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#64748B' }}>{curFloor} этаж:</span>
+            <span style={{ fontSize: 12, color: '#1D4ED8', fontWeight: 600 }}><i className="ti ti-building" style={{ marginRight: 3 }} />{floorOccupied} занято</span>
+            <span style={{ fontSize: 12, color: '#16A34A', fontWeight: 600 }}><i className="ti ti-circle-check" style={{ marginRight: 3 }} />{floorFree} свободно</span>
+            <span style={{ fontSize: 12, color: '#64748B' }}>Площадь: <b>{floorArea.toLocaleString('ru')} м²</b></span>
+            <span style={{ fontSize: 12, color: '#64748B' }}>Арендовано: <b>{floorOccupiedArea.toLocaleString('ru')} м²</b></span>
+            <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: floorPct >= 80 ? '#16A34A' : floorPct >= 50 ? '#D97706' : '#DC2626' }}>Заполненность {floorPct}%</span>
+          </div>
+        )}
+
+        {/* Сетка помещений */}
+        {floorRooms.length === 0
+          ? (
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94A3B8' }}>
+              <i className="ti ti-building-off" style={{ fontSize: 48, display: 'block', marginBottom: 12, opacity: .4 }} />
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#64748B', marginBottom: 6 }}>Нет помещений на этом этаже</div>
+              <div style={{ fontSize: 13, marginBottom: 16 }}>Добавьте первое помещение</div>
+              <button className="btn btn-primary" onClick={() => openModal('create-room')}>
+                <i className="ti ti-plus" /> Добавить помещение
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+              {floorRooms.map(room => {
+                const contract = getContract(room.id);
+                const tenant = contract ? getTenant(contract.tenant_id) : null;
+                const isSelected = selected?.id === room.id;
+                const sc = statusClass[room.status] || 's-free';
+
+                return (
+                  <div key={room.id}
+                    className={`room ${sc}`}
+                    style={{
+                      minHeight: 120,
+                      outline: isSelected ? '2.5px solid #2563EB' : 'none',
+                      outlineOffset: 2,
+                      boxShadow: isSelected ? '0 0 0 4px rgba(37,99,235,.12)' : undefined,
+                    }}
+                    onClick={() => setSelected(isSelected ? null : room)}>
+                    {/* Шапка карточки */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div className="room-name" style={{ fontSize: 13 }}>{room.name}</div>
+                      <div className="room-status-pill" style={{ fontSize: 9 }}>{statusLabel[room.status]}</div>
+                    </div>
+
+                    {/* Площадь */}
+                    <div className="room-area" style={{ fontSize: 12, marginTop: 6 }}>
+                      <i className="ti ti-layout" style={{ fontSize: 11, marginRight: 3 }} />{room.area} м²
+                    </div>
+
+                    {/* Арендатор или базовая ставка */}
+                    <div style={{ marginTop: 6 }}>
+                      {tenant ? (
+                        <div style={{ fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={tenant.name}>
+                          <i className="ti ti-user" style={{ fontSize: 10, marginRight: 3 }} />{tenant.name}
+                        </div>
+                      ) : room.status === 'free' ? (
+                        <div style={{ fontSize: 11, color: '#16A34A', fontWeight: 600 }}>
+                          <i className="ti ti-tag" style={{ fontSize: 10, marginRight: 3 }} />{room.base_rate > 0 ? `${room.base_rate.toLocaleString('ru')} сом/м²` : 'Ставка не указана'}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 11, opacity: .6 }}>—</div>
+                      )}
+                    </div>
+
+                    {/* Ставка по договору или дата окончания */}
+                    {contract && (
+                      <div style={{ marginTop: 4, fontSize: 11, fontWeight: 600 }}>
+                        <i className="ti ti-cash" style={{ fontSize: 10, marginRight: 3 }} />{contract.monthly_rent.toLocaleString('ru')} сом/мес
+                      </div>
+                    )}
+                    {contract && (
+                      <div style={{ marginTop: 2, fontSize: 10, opacity: .7 }}>
+                        до {new Date(contract.end_date).toLocaleDateString('ru', { day: 'numeric', month: 'short', year: '2-digit' })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )
         }
 
         {/* Detail panel */}
         {selected && (
-          <div className="detail-panel" style={{ marginTop: 14 }}>
-            <div className="detail-top">
+          <div style={{ marginTop: 16, background: '#EFF6FF', border: '1.5px solid #93C5FD', borderRadius: 12, padding: '16px 20px', animation: 'fadeIn .2s ease' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
               <div>
-                <div className="detail-title">{selected.name}</div>
-                <div className="detail-sub">Этаж {selected.floor} · {selected.area} м² · {statusLabel[selected.status]}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#0F172A' }}>{selected.name}</div>
+                <div style={{ fontSize: 12, color: '#64748B', marginTop: 3, display: 'flex', gap: 12 }}>
+                  <span><i className="ti ti-stairs" style={{ marginRight: 3 }} />Этаж {selected.floor}</span>
+                  <span><i className="ti ti-layout" style={{ marginRight: 3 }} />{selected.area} м²</span>
+                  <span><i className="ti ti-tag" style={{ marginRight: 3 }} />{selected.base_rate > 0 ? `${selected.base_rate.toLocaleString('ru')} сом/м²` : 'ставка не указана'}</span>
+                  <span className={`pill ${selected.status === 'occupied' ? 'pill-occ' : selected.status === 'free' ? 'pill-free' : selected.status === 'reserved' ? 'pill-res' : 'pill-rep'}`}>
+                    {statusLabel[selected.status]}
+                  </span>
+                </div>
               </div>
               <button className="close-btn" onClick={() => setSelected(null)}>×</button>
             </div>
 
-            <div className="detail-grid">
-              <div className="detail-field"><div className="lbl">Арендатор</div><div className="val">{selTenant?.name || '—'}</div></div>
-              <div className="detail-field"><div className="lbl">Договор</div><div className="val">{selContract ? `№ ${selContract.number}` : '—'}</div></div>
-              <div className="detail-field">
-                <div className="lbl">Ставка</div>
-                <div className="val">{selContract ? `${selContract.monthly_rent.toLocaleString('ru')} сом/мес` : `${selected.base_rate.toLocaleString('ru')} сом/м²`}</div>
-              </div>
-              <div className="detail-field"><div className="lbl">Истекает</div><div className="val">{selContract ? new Date(selContract.end_date).toLocaleDateString('ru') : '—'}</div></div>
+            {/* Инфо блоки */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 16 }}>
+              {[
+                { icon: 'ti-user', label: 'Арендатор', val: selTenant?.name || '—' },
+                { icon: 'ti-file-text', label: 'Договор', val: selContract ? `№ ${selContract.number}` : '—' },
+                { icon: 'ti-cash', label: 'Ставка', val: selContract ? `${selContract.monthly_rent.toLocaleString('ru')} сом/мес` : '—' },
+                { icon: 'ti-calendar', label: 'Истекает', val: selContract ? new Date(selContract.end_date).toLocaleDateString('ru') : '—' },
+              ].map(f => (
+                <div key={f.label} style={{ background: '#fff', borderRadius: 8, padding: '10px 12px', border: '1px solid #BFDBFE' }}>
+                  <div style={{ fontSize: 11, color: '#64748B', marginBottom: 4 }}>
+                    <i className={`ti ${f.icon}`} style={{ marginRight: 4 }} />{f.label}
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.val}</div>
+                </div>
+              ))}
             </div>
 
-            <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {/* Свободное / Резерв — создать договор */}
               {(selected.status === 'free' || selected.status === 'reserved') && (
                 <ActionCard
@@ -524,11 +658,21 @@ export default function Floors() {
             <button className="modal-close" onClick={closeModal}>×</button>
           </div>
           <div className="modal-body">
-            {historyLoading && (
-              <div className="empty-state">Загрузка истории...</div>
+            {historyError && (
+              <div className="warn-banner">
+                <i className="ti ti-alert-triangle" style={{ fontSize: 18 }} />
+                {historyError}
+              </div>
             )}
 
-            {history && !historyLoading && (
+            {(historyLoading || (!history && !historyError)) && (
+              <div className="empty-state">
+                <i className="ti ti-loader" style={{ fontSize: 24, display: 'block', marginBottom: 8 }} />
+                Загрузка истории...
+              </div>
+            )}
+
+            {history && (
               <>
                 {/* Общая статистика */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
@@ -563,8 +707,16 @@ export default function Floors() {
                           <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
                             Договор № {c.number}
                             {c.tenant.inn && ` · ИНН ${c.tenant.inn}`}
+                            {c.tenant.contact_name && ` · ${c.tenant.contact_name}`}
                             {c.tenant.phone && ` · ${c.tenant.phone}`}
                           </div>
+                          {c.file_name && (
+                            <a href={`http://localhost:8000/uploads/contract_${c.id}_${encodeURIComponent(c.file_name)}`}
+                              target="_blank" rel="noreferrer"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 11, color: '#2563EB', fontWeight: 500, textDecoration: 'none' }}>
+                              <i className="ti ti-file-download" /> {c.file_name}
+                            </a>
+                          )}
                         </div>
                         <div style={{ textAlign: 'right', fontSize: 12, color: '#64748B' }}>
                           <div>{c.start_date ? new Date(c.start_date).toLocaleDateString('ru') : '—'} — {c.end_date ? new Date(c.end_date).toLocaleDateString('ru') : '—'}</div>
@@ -609,10 +761,12 @@ export default function Floors() {
                                 pending: { bg: '#F1F5F9', color: '#94A3B8', icon: '·' },
                               };
                               const s = cfg[p.status] || cfg.pending;
+                              const isUtil = p.payment_type === 'utilities';
                               return (
-                                <div key={p.id} title={`${MONTHS_SHORT[(p.period_month || 1) - 1]} ${p.period_year} · ${p.status === 'paid' ? 'Оплачено' : `Долг ${(p.amount_due - p.amount_paid).toLocaleString('ru')} сом`}`}
-                                  style={{ background: s.bg, color: s.color, borderRadius: 4, padding: '3px 6px', fontSize: 10, fontWeight: 700, cursor: 'default' }}>
-                                  {MONTHS_SHORT[(p.period_month || 1) - 1]} {p.period_year} {s.icon}
+                                <div key={p.id}
+                                  title={`${isUtil ? '⚡ Коммуналка' : '🏢 Аренда'} · ${MONTHS_SHORT[(p.period_month || 1) - 1]} ${p.period_year} · ${p.status === 'paid' ? 'Оплачено' : `${(p.amount_due - p.amount_paid).toLocaleString('ru')} сом`}`}
+                                  style={{ background: isUtil ? '#FFFBEB' : s.bg, color: isUtil ? '#D97706' : s.color, borderRadius: 4, padding: '3px 6px', fontSize: 10, fontWeight: 700, cursor: 'default', border: isUtil ? '1px solid #FCD34D' : 'none' }}>
+                                  {isUtil ? '⚡' : ''} {MONTHS_SHORT[(p.period_month || 1) - 1]} {p.period_year} {s.icon}
                                 </div>
                               );
                             })}

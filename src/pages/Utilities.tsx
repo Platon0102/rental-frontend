@@ -1,253 +1,389 @@
 import { useEffect, useState } from 'react';
-import { utilitiesApi, roomsApi } from '../api';
-import type { UtilityReading, UtilityBill, Room } from '../api';
-import Modal from '../components/Modal';
-import { Plus, Send, Zap } from 'lucide-react';
+import { utilitiesApi, roomsApi, contractsApi, tenantsApi, paymentsApi } from '../api';
+import type { UtilityReading, Payment, Room, Contract, Tenant } from '../api';
 
-const utilityTypes = [
-  { value: 'electricity', label: 'Электричество' },
-  { value: 'water_cold', label: 'Хол. вода' },
-  { value: 'water_hot', label: 'Гор. вода' },
-  { value: 'heat', label: 'Отопление' },
-  { value: 'internet', label: 'Интернет' },
-  { value: 'other', label: 'Прочее' },
-];
-
-const MONTHS = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 
 export default function Utilities() {
   const now = new Date();
-  const [tab, setTab] = useState<'readings' | 'bills'>('readings');
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
   const [readings, setReadings] = useState<UtilityReading[]>([]);
-  const [bills, setBills] = useState<UtilityBill[]>([]);
-  const [showReading, setShowReading] = useState(false);
+  const [utilPayments, setUtilPayments] = useState<Payment[]>([]); // платежи типа utilities
+
+  const [showModal, setShowModal] = useState(false);
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [loading, setLoading] = useState(false);
-  const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1);
-  const [filterYear, setFilterYear] = useState(now.getFullYear());
-  const [filterRoom, setFilterRoom] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [paySuccess, setPaySuccess] = useState(false);
 
-  const [readingForm, setReadingForm] = useState({
-    room_id: '', utility_type: 'electricity', period_month: now.getMonth() + 1, period_year: now.getFullYear(),
-    prev_reading: '', curr_reading: '', tariff: '', is_fixed: false, fixed_amount: '',
-  });
+  const [form, setForm] = useState({ prev: '', curr: '', tariff: '6.50' });
+  const [payForm, setPayForm] = useState({ amount_paid: '', payment_date: now.toISOString().slice(0,10), comment: '' });
 
-  const loadReadings = () => utilitiesApi.listReadings({ room_id: filterRoom ? Number(filterRoom) : undefined, period_month: filterMonth, period_year: filterYear }).then(setReadings);
-  const loadBills = () => utilitiesApi.listBills({ period_month: filterMonth, period_year: filterYear }).then(setBills);
+  const loadPeriod = async (m: number, y: number) => {
+    const [rds, pays] = await Promise.all([
+      utilitiesApi.listReadings({ period_month: m, period_year: y }),
+      paymentsApi.list({ period_month: m, period_year: y }),
+    ]);
+    setReadings(rds.filter(x => x.utility_type === 'electricity'));
+    setUtilPayments(pays.filter(p => p.payment_type === 'utilities'));
+  };
 
-  useEffect(() => { roomsApi.list().then(setRooms); }, []);
-  useEffect(() => { if (tab === 'readings') loadReadings(); else loadBills(); }, [tab, filterMonth, filterYear, filterRoom]);
+  useEffect(() => {
+    Promise.all([roomsApi.list(), contractsApi.list({ status: 'active' }), tenantsApi.list()])
+      .then(([r, c, t]) => { setRooms(r); setContracts(c); setTenants(t); });
+    loadPeriod(month, year);
+  }, []);
 
-  const addReading = async () => {
+  useEffect(() => { loadPeriod(month, year); }, [month, year]);
+
+  const getContract = (roomId: number) => contracts.find(c => c.room_id === roomId);
+  const getTenant = (roomId: number) => {
+    const c = getContract(roomId);
+    return c ? tenants.find(t => t.id === c.tenant_id) : undefined;
+  };
+  const getReading = (roomId: number) => readings.find(r => r.room_id === roomId);
+  const getUtilPayment = (roomId: number) => {
+    const c = getContract(roomId);
+    return c ? utilPayments.find(p => p.contract_id === c.id) : undefined;
+  };
+
+  const occupiedRooms = rooms.filter(r => r.status === 'occupied');
+
+  const openReadingModal = (room: Room) => {
+    setSelectedRoom(room);
+    setSuccess(false);
+    const existing = getReading(room.id);
+    setForm({
+      prev: String(existing?.prev_reading ?? ''),
+      curr: String(existing?.curr_reading ?? ''),
+      tariff: String(existing?.tariff ?? '6.50'),
+    });
+    setShowModal(true);
+  };
+
+  const openPayModal = (room: Room) => {
+    const rd = getReading(room.id);
+    const existingPay = getUtilPayment(room.id);
+    setSelectedRoom(room);
+    setPaySuccess(false);
+    setPayForm({
+      amount_paid: String(rd?.amount ? Math.round(rd.amount) : ''),
+      payment_date: now.toISOString().slice(0,10),
+      comment: existingPay?.comment || '',
+    });
+    setShowPayModal(true);
+  };
+
+  const saveReading = async () => {
+    if (!selectedRoom) return;
     setLoading(true);
     try {
       await utilitiesApi.addReading({
-        room_id: Number(readingForm.room_id),
-        utility_type: readingForm.utility_type as any,
-        period_month: readingForm.period_month,
-        period_year: readingForm.period_year,
-        prev_reading: readingForm.prev_reading ? Number(readingForm.prev_reading) : undefined,
-        curr_reading: readingForm.curr_reading ? Number(readingForm.curr_reading) : undefined,
-        tariff: readingForm.tariff ? Number(readingForm.tariff) : undefined,
-        is_fixed: readingForm.is_fixed,
-        fixed_amount: readingForm.fixed_amount ? Number(readingForm.fixed_amount) : undefined,
+        room_id: selectedRoom.id,
+        utility_type: 'electricity',
+        period_month: month,
+        period_year: year,
+        prev_reading: Number(form.prev) || undefined,
+        curr_reading: Number(form.curr) || undefined,
+        tariff: Number(form.tariff) || undefined,
+        is_fixed: false,
       });
-      setShowReading(false);
-      loadReadings();
-    } catch (e: any) {
-      alert(e.response?.data?.detail || 'Ошибка');
-    } finally { setLoading(false); }
+      setSuccess(true);
+      await loadPeriod(month, year);
+      setTimeout(() => setShowModal(false), 1200);
+    } catch (e: any) { alert(e.response?.data?.detail || 'Ошибка'); }
+    finally { setLoading(false); }
   };
 
-  const generateBills = async () => {
-    if (!confirm(`Сформировать счета за ${MONTHS[filterMonth - 1]} ${filterYear}?`)) return;
+  const savePayment = async () => {
+    if (!selectedRoom) return;
+    const contract = getContract(selectedRoom.id);
+    if (!contract) { alert('Нет активного договора'); return; }
+    const rd = getReading(selectedRoom.id);
+    if (!rd?.amount) { alert('Сначала введите показания счётчика'); return; }
+
     setLoading(true);
     try {
-      const result = await utilitiesApi.generateBills(filterMonth, filterYear);
-      alert(`Создано счетов: ${result.generated}`);
-      loadBills();
+      const amountDue = Math.round(rd.amount);
+      const amountPaid = Number(payForm.amount_paid) || amountDue;
+
+      // Ищем существующий платёж за этот период
+      const existing = getUtilPayment(selectedRoom.id);
+      if (existing) {
+        // Обновляем существующий
+        await paymentsApi.register(existing.id, {
+          amount_paid: existing.amount_paid + amountPaid,
+          payment_date: payForm.payment_date,
+          comment: payForm.comment || undefined,
+        });
+      } else {
+        // Создаём новый
+        await paymentsApi.create({
+          contract_id: contract.id,
+          payment_type: 'utilities',
+          period_month: month,
+          period_year: year,
+          amount_due: amountDue,
+          amount_paid: amountPaid,
+          payment_date: payForm.payment_date || undefined,
+          comment: payForm.comment || undefined,
+        });
+      }
+      setPaySuccess(true);
+      await loadPeriod(month, year);
+      setTimeout(() => setShowPayModal(false), 1200);
+    } catch (e: any) {
+      const d = e.response?.data?.detail;
+      alert(typeof d === 'string' ? d : 'Ошибка записи платежа');
     } finally { setLoading(false); }
   };
 
-  const markSent = async (id: number) => {
-    await utilitiesApi.markSent(id);
-    loadBills();
-  };
-
-  const roomName = (id: number) => rooms.find(r => r.id === id)?.name ?? `#${id}`;
+  const consumption = Math.max(0, (Number(form.curr)||0) - (Number(form.prev)||0));
+  const previewAmount = Math.round(consumption * (Number(form.tariff)||0));
+  const totalReadingsAmount = readings.reduce((s,r) => s + (r.amount||0), 0);
+  const totalPaid = utilPayments.reduce((s,p) => s + p.amount_paid, 0);
+  const fmt = (n: number) => Math.round(n).toLocaleString('ru');
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Коммунальные услуги</h1>
-        <div className="flex gap-2">
-          {tab === 'readings' && (
-            <button onClick={() => setShowReading(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700">
-              <Plus size={16} /> Показания
-            </button>
+    <div>
+      <div className="stats-grid" style={{ marginBottom: 20 }}>
+        <div className="stat-card">
+          <div className="stat-label">Период</div>
+          <div className="stat-value" style={{ fontSize: 20 }}>{MONTHS[month-1].slice(0,3)} {year}</div>
+          <div className="stat-sub">текущий период</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Введено показаний</div>
+          <div className="stat-value" style={{ color: '#2563EB' }}>{readings.length} / {occupiedRooms.length}</div>
+          <div className="stat-sub">помещений</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Начислено ⚡</div>
+          <div className="stat-value" style={{ fontSize: 20, color: '#D97706' }}>{fmt(totalReadingsAmount)}</div>
+          <div className="stat-sub">сом за электричество</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Оплачено</div>
+          <div className="stat-value" style={{ fontSize: 20, color: '#16A34A' }}>{fmt(totalPaid)}</div>
+          <div className="stat-sub">из {fmt(totalReadingsAmount)} сом · {utilPayments.length} платежей</div>
+          {totalReadingsAmount > 0 && totalPaid < totalReadingsAmount && (
+            <span className="stat-badge badge-warn">не всё оплачено</span>
           )}
-          {tab === 'bills' && (
-            <button onClick={generateBills} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
-              <Zap size={16} /> Сформировать счета
-            </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">⚡ Электроэнергия — {MONTHS[month-1]} {year}</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <select value={month} onChange={e => setMonth(Number(e.target.value))}
+              style={{ padding: '7px 12px', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 13, fontFamily: 'inherit' }}>
+              {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+            </select>
+            <select value={year} onChange={e => setYear(Number(e.target.value))}
+              style={{ padding: '7px 12px', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 13, fontFamily: 'inherit' }}>
+              {[2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {occupiedRooms.length === 0
+          ? <div className="empty-state">Нет занятых помещений</div>
+          : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Помещение</th>
+                    <th>Арендатор</th>
+                    <th>Пред.</th>
+                    <th>Тек.</th>
+                    <th>Расход, кВт·ч</th>
+                    <th>Тариф</th>
+                    <th>Начислено</th>
+                    <th>Статус оплаты</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {occupiedRooms.map(room => {
+                    const rd = getReading(room.id);
+                    const tenant = getTenant(room.id);
+                    const pay = getUtilPayment(room.id);
+                    const isPaid = pay && pay.status === 'paid';
+                    const isPartial = pay && pay.status === 'partial';
+
+                    return (
+                      <tr key={room.id}>
+                        <td style={{ fontWeight: 600 }}>{room.name}</td>
+                        <td style={{ color: '#64748B' }}>{tenant?.name || '—'}</td>
+                        <td>{rd?.prev_reading ?? <span style={{ color: '#CBD5E1' }}>—</span>}</td>
+                        <td>{rd?.curr_reading ?? <span style={{ color: '#CBD5E1' }}>—</span>}</td>
+                        <td style={{ fontWeight: 600 }}>{rd?.consumption != null ? rd.consumption : <span style={{ color: '#CBD5E1' }}>—</span>}</td>
+                        <td>{rd?.tariff ? `${rd.tariff} сом` : <span style={{ color: '#CBD5E1' }}>—</span>}</td>
+                        <td style={{ fontWeight: 700, color: rd ? '#D97706' : '#CBD5E1', fontSize: 14 }}>
+                          {rd?.amount ? `${fmt(rd.amount)} сом` : '—'}
+                        </td>
+                        <td>
+                          {!rd ? (
+                            <span style={{ color: '#CBD5E1', fontSize: 12 }}>нет данных</span>
+                          ) : isPaid ? (
+                            <span className="pill pill-paid"><i className="ti ti-check" /> Оплачено</span>
+                          ) : isPartial ? (
+                            <span className="pill pill-part">Частично · {fmt(pay!.amount_paid)} сом</span>
+                          ) : (
+                            <span className="pill pill-debt">Не оплачено</span>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button className="btn btn-secondary"
+                              style={{ fontSize: 11, padding: '4px 10px', background: rd ? '#FFFBEB' : undefined, borderColor: rd ? '#FCD34D' : undefined }}
+                              onClick={() => openReadingModal(room)}>
+                              <i className={`ti ti-${rd ? 'edit' : 'plus'}`} /> {rd ? 'Показания' : 'Ввести'}
+                            </button>
+                            {rd && !isPaid && (
+                              <button className="btn btn-secondary"
+                                style={{ fontSize: 11, padding: '4px 10px', background: '#F0FDF4', borderColor: '#86EFAC', color: '#16A34A' }}
+                                onClick={() => openPayModal(room)}>
+                                <i className="ti ti-credit-card" /> Оплатить
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {readings.length > 0 && (
+                  <tfoot>
+                    <tr style={{ background: '#FFFBEB' }}>
+                      <td colSpan={6} style={{ fontWeight: 700, padding: '10px 14px', color: '#92400E' }}>
+                        Итого {MONTHS[month-1]} {year}
+                      </td>
+                      <td style={{ fontWeight: 700, fontSize: 14, color: '#D97706', padding: '10px 14px' }}>{fmt(totalReadingsAmount)} сом</td>
+                      <td style={{ fontWeight: 700, fontSize: 14, color: '#16A34A', padding: '10px 14px' }}>
+                        {utilPayments.length > 0 ? `${fmt(totalPaid)} сом оплачено` : '—'}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
           )}
-        </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-gray-100 rounded-lg w-fit">
-        {(['readings', 'bills'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${tab === t ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}>
-            {t === 'readings' ? 'Показания счётчиков' : 'Счета'}
-          </button>
-        ))}
-      </div>
-
-      {/* Period filters */}
-      <div className="flex gap-3">
-        <select value={filterMonth} onChange={e => setFilterMonth(Number(e.target.value))} className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-          {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
-        </select>
-        <input type="number" value={filterYear} onChange={e => setFilterYear(Number(e.target.value))} className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-24" />
-        {tab === 'readings' && (
-          <select value={filterRoom} onChange={e => setFilterRoom(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-            <option value="">Все помещения</option>
-            {rooms.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-        )}
-      </div>
-
-      {tab === 'readings' ? (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                {['Помещение', 'Тип', 'Пред.', 'Тек.', 'Расход', 'Тариф', 'Сумма, ₸'].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {readings.map(r => (
-                <tr key={r.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{roomName(r.room_id)}</td>
-                  <td className="px-4 py-3 text-gray-600">{utilityTypes.find(t => t.value === r.utility_type)?.label ?? r.utility_type}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.prev_reading ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.curr_reading ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.consumption ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.tariff ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-700 font-medium">{r.amount?.toLocaleString('ru') ?? '—'}</td>
-                </tr>
-              ))}
-              {readings.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Нет показаний за выбранный период</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                {['Договор', 'Свет', 'Хол.вода', 'Гор.вода', 'Отопл.', 'Интернет', 'Итого, ₸', 'Статус', ''].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {bills.map(b => (
-                <tr key={b.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">#{b.contract_id}</td>
-                  <td className="px-4 py-3 text-gray-600">{b.electricity.toLocaleString('ru')}</td>
-                  <td className="px-4 py-3 text-gray-600">{b.water_cold.toLocaleString('ru')}</td>
-                  <td className="px-4 py-3 text-gray-600">{b.water_hot.toLocaleString('ru')}</td>
-                  <td className="px-4 py-3 text-gray-600">{b.heat.toLocaleString('ru')}</td>
-                  <td className="px-4 py-3 text-gray-600">{b.internet.toLocaleString('ru')}</td>
-                  <td className="px-4 py-3 font-semibold text-gray-900">{b.total.toLocaleString('ru')}</td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${b.is_sent ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
-                      {b.is_sent ? 'Отправлен' : 'Не отправлен'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {!b.is_sent && (
-                      <button onClick={() => markSent(b.id)} className="text-gray-400 hover:text-indigo-600" title="Отметить отправленным"><Send size={15} /></button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {bills.length === 0 && (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">Нет счетов за выбранный период</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Add reading modal */}
-      {showReading && (
-        <Modal title="Ввести показания счётчика" onClose={() => setShowReading(false)}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Помещение *</label>
-              <select value={readingForm.room_id} onChange={e => setReadingForm(f => ({ ...f, room_id: e.target.value }))} className="input w-full">
-                <option value="">— выберите —</option>
-                {rooms.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
+      {/* Modal: ввод показаний */}
+      <div className={`modal-overlay${showModal ? ' open' : ''}`}
+        onClick={e => e.target === e.currentTarget && setShowModal(false)}>
+        <div className="modal" style={{ width: 400 }}>
+          <div className="modal-header">
+            <div className="modal-title"><span style={{ fontSize: 20 }}>⚡</span> Показания — {selectedRoom?.name}</div>
+            <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
+          </div>
+          <div className="modal-body">
+            <div style={{ background: '#FFFBEB', borderRadius: 8, padding: '8px 14px', marginBottom: 16, fontSize: 12, color: '#92400E' }}>
+              Период: <b>{MONTHS[month-1]} {year}</b>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Тип услуги</label>
-              <select value={readingForm.utility_type} onChange={e => setReadingForm(f => ({ ...f, utility_type: e.target.value }))} className="input w-full">
-                {utilityTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Месяц</label>
-                <select value={readingForm.period_month} onChange={e => setReadingForm(f => ({ ...f, period_month: Number(e.target.value) }))} className="input w-full">
-                  {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
-                </select>
+            <div className="mf-grid mf-2">
+              <div className="mf-field">
+                <label>Предыдущее показание</label>
+                <input type="number" value={form.prev} onChange={e => setForm(f => ({ ...f, prev: e.target.value }))} placeholder="0" step="0.001" style={{ fontSize: 16 }} />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Год</label>
-                <input type="number" value={readingForm.period_year} onChange={e => setReadingForm(f => ({ ...f, period_year: Number(e.target.value) }))} className="input w-full" />
+              <div className="mf-field">
+                <label>Текущее показание</label>
+                <input type="number" value={form.curr} onChange={e => setForm(f => ({ ...f, curr: e.target.value }))} placeholder="0" step="0.001" style={{ fontSize: 16 }} />
+              </div>
+              <div className="mf-field" style={{ gridColumn: 'span 2' }}>
+                <label>Тариф (сом / кВт·ч)</label>
+                <input type="number" value={form.tariff} onChange={e => setForm(f => ({ ...f, tariff: e.target.value }))} step="0.01" />
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="fixed" checked={readingForm.is_fixed} onChange={e => setReadingForm(f => ({ ...f, is_fixed: e.target.checked }))} />
-              <label htmlFor="fixed" className="text-sm text-gray-700">Фиксированная сумма</label>
-            </div>
-            {readingForm.is_fixed ? (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Фиксированная сумма, ₸</label>
-                <input type="number" value={readingForm.fixed_amount} onChange={e => setReadingForm(f => ({ ...f, fixed_amount: e.target.value }))} className="input w-full" />
-              </div>
-            ) : (
-              <div className="grid grid-cols-3 gap-3">
+            {form.curr && form.prev && (
+              <div style={{ background: '#FFFBEB', border: '1.5px solid #FCD34D', borderRadius: 10, padding: '14px 16px', marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Пред. показание</label>
-                  <input type="number" value={readingForm.prev_reading} onChange={e => setReadingForm(f => ({ ...f, prev_reading: e.target.value }))} className="input w-full" />
+                  <div style={{ fontSize: 12, color: '#92400E' }}>Расход: <b>{consumption.toFixed(3)} кВт·ч</b></div>
+                  <div style={{ fontSize: 12, color: '#92400E', marginTop: 2 }}>Тариф: {form.tariff} сом/кВт·ч</div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Тек. показание</label>
-                  <input type="number" value={readingForm.curr_reading} onChange={e => setReadingForm(f => ({ ...f, curr_reading: e.target.value }))} className="input w-full" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Тариф</label>
-                  <input type="number" value={readingForm.tariff} onChange={e => setReadingForm(f => ({ ...f, tariff: e.target.value }))} className="input w-full" />
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 11, color: '#92400E' }}>К оплате</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#D97706' }}>{fmt(previewAmount)} сом</div>
                 </div>
               </div>
             )}
-            <div className="flex justify-end gap-3 pt-2">
-              <button onClick={() => setShowReading(false)} className="px-4 py-2 border border-gray-300 rounded-lg text-sm">Отмена</button>
-              <button onClick={addReading} disabled={loading} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-50">
-                {loading ? 'Сохранение...' : 'Сохранить'}
-              </button>
+            <div className={`success-banner${success ? ' show' : ''}`}>
+              <div className="success-title"><i className="ti ti-circle-check" style={{ fontSize: 20 }} />Показания сохранены</div>
+              {previewAmount > 0 && <div style={{ fontSize: 12, color: '#16A34A', marginTop: 4 }}>К оплате: {fmt(previewAmount)} сом — нажмите «Оплатить» в таблице</div>}
             </div>
           </div>
-        </Modal>
-      )}
+          <div className="modal-footer">
+            <button className="btn btn-primary" onClick={saveReading} disabled={loading || success} style={{ background: '#D97706' }}>
+              <i className="ti ti-check" /> {loading ? 'Сохранение...' : 'Сохранить'}
+            </button>
+            <button className="btn btn-secondary" onClick={() => setShowModal(false)}>Закрыть</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal: оплата */}
+      <div className={`modal-overlay${showPayModal ? ' open' : ''}`}
+        onClick={e => e.target === e.currentTarget && setShowPayModal(false)}>
+        <div className="modal" style={{ width: 400 }}>
+          <div className="modal-header">
+            <div className="modal-title"><i className="ti ti-credit-card" /> Оплата ⚡ — {selectedRoom?.name}</div>
+            <button className="modal-close" onClick={() => setShowPayModal(false)}>×</button>
+          </div>
+          <div className="modal-body">
+            {selectedRoom && (() => {
+              const rd = getReading(selectedRoom.id);
+              return rd?.amount ? (
+                <div style={{ background: '#FFFBEB', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: 12, color: '#92400E' }}>
+                    <div>Расход: <b>{rd.consumption} кВт·ч</b></div>
+                    <div>Период: <b>{MONTHS[month-1]} {year}</b></div>
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: '#D97706' }}>{fmt(rd.amount)} сом</div>
+                </div>
+              ) : null;
+            })()}
+            <div className="mf-grid">
+              <div className="mf-field">
+                <label>Сумма оплаты (сом)</label>
+                <input type="number" value={payForm.amount_paid}
+                  onChange={e => setPayForm(f => ({ ...f, amount_paid: e.target.value }))}
+                  style={{ fontSize: 18, fontWeight: 600 }} placeholder="0" />
+                <div className="mf-hint">Оставьте пустым — спишется полная сумма</div>
+              </div>
+              <div className="mf-field">
+                <label>Дата оплаты</label>
+                <input type="date" value={payForm.payment_date}
+                  onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))} />
+              </div>
+              <div className="mf-field">
+                <label>Комментарий (необязательно)</label>
+                <input value={payForm.comment} onChange={e => setPayForm(f => ({ ...f, comment: e.target.value }))} placeholder="п/п №..." />
+              </div>
+            </div>
+            <div className={`success-banner${paySuccess ? ' show' : ''}`}>
+              <div className="success-title"><i className="ti ti-circle-check" style={{ fontSize: 20 }} />Платёж записан</div>
+              <div style={{ fontSize: 12, color: '#16A34A', marginTop: 4 }}>Отражено в истории помещения и статистике платежей</div>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-green" onClick={savePayment} disabled={loading || paySuccess}>
+              <i className="ti ti-check" /> {loading ? 'Запись...' : 'Записать оплату'}
+            </button>
+            <button className="btn btn-secondary" onClick={() => setShowPayModal(false)}>Закрыть</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -62,6 +62,7 @@ export default function Contracts() {
       });
       setSuccessCreate(true);
       load();
+      setTimeout(() => closeModal('create'), 1500);
     } catch (e: any) {
       const detail = e.response?.data?.detail;
       alert(typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: any) => d.msg).join(', ') : JSON.stringify(detail) || 'Ошибка при создании договора');
@@ -80,6 +81,7 @@ export default function Contracts() {
       });
       setSuccessTerminate(true);
       load();
+      setTimeout(() => closeModal('terminate'), 1500);
     } catch (e: any) { alert(e.response?.data?.detail || 'Ошибка'); }
     finally { setLoading(false); }
   };
@@ -148,9 +150,23 @@ export default function Contracts() {
                   <td>{new Date(c.end_date).toLocaleDateString('ru')}</td>
                   <td><span className={`pill ${statusPill[c.status] || 'pill-act'}`}>{statusLabel[c.status]}</span></td>
                   <td>
-                    <button onClick={() => setShowUpload(c)} className="btn btn-secondary" style={{ fontSize: 11, padding: '3px 10px' }}>
-                      <i className="ti ti-upload" /> {c.file_name ? 'Заменить' : 'Прикрепить'}
-                    </button>
+                    <div style={{ display: 'flex', gap: 5 }}>
+                      {c.file_name && (
+                        <a
+                          href={`http://localhost:8000/uploads/contract_${c.id}_${encodeURIComponent(c.file_name)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn btn-secondary"
+                          style={{ fontSize: 11, padding: '3px 10px', color: '#2563EB', borderColor: '#BFDBFE', background: '#EFF6FF' }}
+                          title={c.file_name}
+                        >
+                          <i className="ti ti-file-download" /> Открыть
+                        </a>
+                      )}
+                      <button onClick={() => setShowUpload(c)} className="btn btn-secondary" style={{ fontSize: 11, padding: '3px 10px' }}>
+                        <i className="ti ti-upload" /> {c.file_name ? 'Заменить' : 'Прикрепить'}
+                      </button>
+                    </div>
                   </td>
                   <td>
                     {(c.status === 'active' || c.status === 'expiring') && (

@@ -57,6 +57,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     '/contracts': 'Договоры аренды',
     '/tenants': 'Арендаторы',
     '/finance': 'Финансы и платежи',
+    '/utilities': 'Коммунальные услуги',
     '/reports': 'Отчёты',
     '/notifications': 'Уведомления',
     '/settings': 'Настройки',
@@ -89,6 +90,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="nav-section">Финансы</div>
         <NavLink to="/finance" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
           <i className="ti ti-credit-card" />Платежи
+        </NavLink>
+        <NavLink to="/utilities" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+          <i className="ti ti-bolt" />Коммунальные
         </NavLink>
         <NavLink to="/reports" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
           <i className="ti ti-chart-bar" />Отчёты

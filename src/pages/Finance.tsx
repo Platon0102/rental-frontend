@@ -3,15 +3,12 @@ import { paymentsApi, contractsApi, tenantsApi, roomsApi } from '../api';
 import type { Payment, Contract, Tenant, Room } from '../api';
 
 const MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-const MONTHS_SHORT = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
 
-type PaymentStatus = Payment['status'];
-
-const statusConfig: Record<string, { pill: string; label: string; color: string; bg: string }> = {
-  paid:    { pill: 'pill-paid', label: 'Оплачено',  color: '#16A34A', bg: '#DCFCE7' },
-  partial: { pill: 'pill-part', label: 'Частично',  color: '#D97706', bg: '#FEF3C7' },
-  debt:    { pill: 'pill-debt', label: 'Долг',      color: '#DC2626', bg: '#FEE2E2' },
-  pending: { pill: 'pill-term', label: 'Предстоит', color: '#64748B', bg: '#F1F5F9' },
+const statusConfig: Record<string, { label: string; pill: string; color: string; bg: string }> = {
+  paid:    { label: 'Оплачено',  pill: 'pill-paid', color: '#16A34A', bg: '#F0FDF4' },
+  partial: { label: 'Частично', pill: 'pill-part', color: '#D97706', bg: '#FFFBEB' },
+  debt:    { label: 'Долг',     pill: 'pill-debt', color: '#DC2626', bg: '#FEF2F2' },
+  pending: { label: 'Предстоит',pill: 'pill-term', color: '#64748B', bg: '#F8FAFC' },
 };
 
 interface ContractInfo {
@@ -26,13 +23,14 @@ export default function Finance() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [contractInfos, setContractInfos] = useState<ContractInfo[]>([]);
-  const [selectedContract, setSelectedContract] = useState<ContractInfo | null>(null);
-  const [showPayModal, setShowPayModal] = useState<Payment | null>(null);
+  const [selected, setSelected] = useState<ContractInfo | null>(null);
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [payForm, setPayForm] = useState({ amount: '', payment_date: '', comment: '' });
-
-  const today = new Date();
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [comment, setComment] = useState('');
+  const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
 
   const loadAll = async () => {
     const [cs, ts, rs] = await Promise.all([
@@ -44,88 +42,102 @@ export default function Finance() {
     setTenants(ts);
     setRooms(rs);
 
-    // загружаем план по каждому договору
     const infos: ContractInfo[] = await Promise.all(
-      cs.map(async c => {
-        const schedule = await paymentsApi.schedule(c.id).catch(() => [] as Payment[]);
-        return {
-          contract: c,
-          tenant: ts.find(t => t.id === c.tenant_id),
-          room: rs.find(r => r.id === c.room_id),
-          schedule,
-        };
-      })
+      cs.map(async c => ({
+        contract: c,
+        tenant: ts.find(t => t.id === c.tenant_id),
+        room: rs.find(r => r.id === c.room_id),
+        schedule: await paymentsApi.schedule(c.id).catch(() => [] as Payment[]),
+      }))
     );
     setContractInfos(infos);
-    if (infos.length > 0 && !selectedContract) {
-      setSelectedContract(infos[0]);
-    } else if (selectedContract) {
-      const updated = infos.find(i => i.contract.id === selectedContract.contract.id);
-      if (updated) setSelectedContract(updated);
+
+    if (selected) {
+      const upd = infos.find(i => i.contract.id === selected.contract.id);
+      if (upd) setSelected(upd);
+    } else if (infos.length > 0) {
+      setSelected(infos[0]);
     }
   };
 
   useEffect(() => { loadAll(); }, []);
 
-  // Статистика по выбранному договору
-  const schedule = selectedContract?.schedule ?? [];
-  const totalDue = schedule.reduce((s, p) => s + p.amount_due, 0);
-  const totalPaid = schedule.reduce((s, p) => s + p.amount_paid, 0);
-  const paidMonths = schedule.filter(p => p.status === 'paid').length;
-  const debtMonths = schedule.filter(p => p.status === 'debt').length;
-  const pendingMonths = schedule.filter(p => p.status === 'pending').length;
+  // Платежи для выбранного договора (только аренда)
+  const rentSchedule = (selected?.schedule ?? []).filter(p => p.payment_type !== 'utilities');
+  const unpaid = rentSchedule.filter(p => p.status !== 'paid');
+  const checkedPayments = rentSchedule.filter(p => checked.has(p.id));
 
-  // Текущий месяц — ближайший не оплаченный
-  const currentPeriodPayment = schedule.find(p =>
-    p.status !== 'paid' &&
-    p.period_year === today.getFullYear() &&
-    p.period_month === today.getMonth() + 1
-  );
+  // Сумма к оплате по выбранным
+  const totalSelected = checkedPayments.reduce((s, p) => {
+    const custom = customAmounts[p.id];
+    return s + (custom !== undefined ? Number(custom) : p.amount_due - p.amount_paid);
+  }, 0);
 
-  // Глобальная статистика по всем договорам
-  const allSchedules = contractInfos.flatMap(i => i.schedule);
-  const globalDebt = allSchedules.filter(p => p.status === 'debt').reduce((s, p) => s + (p.amount_due - p.amount_paid), 0);
-  const globalPaid = allSchedules.filter(p => p.status === 'paid').reduce((s, p) => s + p.amount_paid, 0);
-
-  const isOverdue = (p: Payment) => {
-    if (p.status === 'paid') return false;
-    const now = new Date();
-    if (p.period_year! < now.getFullYear()) return true;
-    if (p.period_year! === now.getFullYear() && p.period_month! < now.getMonth() + 1) return true;
-    return false;
-  };
-
-  const openPayModal = (p: Payment) => {
-    setShowPayModal(p);
-    setSuccess(false);
-    setPayForm({
-      amount: String(p.amount_due - p.amount_paid),
-      payment_date: today.toISOString().slice(0, 10),
-      comment: '',
+  const toggleCheck = (p: Payment) => {
+    if (p.status === 'paid') return;
+    setChecked(prev => {
+      const next = new Set(prev);
+      if (next.has(p.id)) next.delete(p.id);
+      else next.add(p.id);
+      return next;
     });
   };
 
-  const registerPayment = async () => {
-    if (!showPayModal) return;
+  const selectAll = () => {
+    setChecked(new Set(unpaid.map(p => p.id)));
+  };
+
+  const clearAll = () => setChecked(new Set());
+
+  const openPayModal = () => {
+    if (checked.size === 0) return;
+    setSuccess(false);
+    setPayDate(new Date().toISOString().slice(0, 10));
+    setComment('');
+    // инициализируем суммы остатков
+    const init: Record<number, string> = {};
+    checkedPayments.forEach(p => {
+      init[p.id] = String(p.amount_due - p.amount_paid);
+    });
+    setCustomAmounts(init);
+    setShowModal(true);
+  };
+
+  const registerPayments = async () => {
     setLoading(true);
     try {
-      const newTotal = showPayModal.amount_paid + Number(payForm.amount);
-      await paymentsApi.register(showPayModal.id, {
-        amount_paid: newTotal,
-        payment_date: payForm.payment_date,
-        comment: payForm.comment || undefined,
-      });
+      await Promise.all(checkedPayments.map(p => {
+        const addAmount = Number(customAmounts[p.id] ?? (p.amount_due - p.amount_paid));
+        const newTotal = p.amount_paid + addAmount;
+        return paymentsApi.register(p.id, {
+          amount_paid: newTotal,
+          payment_date: payDate,
+          comment: comment || undefined,
+        });
+      }));
       setSuccess(true);
+      setChecked(new Set());
       await loadAll();
+      setTimeout(() => setShowModal(false), 1500);
     } catch (e: any) {
       alert(e.response?.data?.detail || 'Ошибка');
     } finally { setLoading(false); }
   };
 
-  const fmt = (n: number) => n.toLocaleString('ru');
-  const fmtShort = (n: number) => n >= 1000000
-    ? `${(n / 1000000).toFixed(1)} млн`
-    : n >= 1000 ? `${Math.round(n / 1000)} тыс` : String(Math.round(n));
+  const fmt = (n: number) => Math.round(n).toLocaleString('ru');
+  const fmtShort = (n: number) => n >= 1000000 ? `${(n/1000000).toFixed(1)}М` : n >= 1000 ? `${Math.round(n/1000)}тыс` : String(Math.round(n));
+
+  // Статистика по выбранному
+  const totalDue  = rentSchedule.reduce((s, p) => s + p.amount_due, 0);
+  const totalPaid = rentSchedule.reduce((s, p) => s + p.amount_paid, 0);
+  const totalDebt = rentSchedule.filter(p => p.status === 'debt').reduce((s, p) => s + (p.amount_due - p.amount_paid), 0);
+  const paidCount = rentSchedule.filter(p => p.status === 'paid').length;
+  const debtCount = rentSchedule.filter(p => p.status === 'debt').length;
+
+  // Глобальная статистика
+  const allRent = contractInfos.flatMap(i => i.schedule.filter(p => p.payment_type !== 'utilities'));
+  const globalDebt = allRent.filter(p => p.status === 'debt').reduce((s,p) => s + (p.amount_due - p.amount_paid), 0);
+  const globalPaid = allRent.filter(p => p.status === 'paid').reduce((s,p) => s + p.amount_paid, 0);
 
   return (
     <div>
@@ -134,7 +146,7 @@ export default function Finance() {
         <div className="stat-card">
           <div className="stat-label">Активных договоров</div>
           <div className="stat-value">{contracts.length}</div>
-          <div className="stat-sub">с планом оплат</div>
+          <div className="stat-sub">с планом платежей</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Получено (всего)</div>
@@ -142,7 +154,7 @@ export default function Finance() {
           <div className="stat-sub">сом по всем договорам</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Задолженность</div>
+          <div className="stat-label">Общий долг</div>
           <div className="stat-value" style={{ fontSize: 22, color: globalDebt > 0 ? '#DC2626' : '#16A34A' }}>
             {globalDebt > 0 ? fmtShort(globalDebt) : '0'}
           </div>
@@ -150,47 +162,46 @@ export default function Finance() {
           {globalDebt > 0 && <span className="stat-badge badge-down">требует внимания</span>}
         </div>
         <div className="stat-card">
-          <div className="stat-label">Просроченных месяцев</div>
+          <div className="stat-label">Договоров с долгом</div>
           <div className="stat-value" style={{ color: '#DC2626' }}>
-            {allSchedules.filter(p => p.status === 'debt' || (p.status === 'pending' && isOverdue(p))).length}
+            {contractInfos.filter(i => i.schedule.some(p => p.status === 'debt')).length}
           </div>
-          <div className="stat-sub">по всем договорам</div>
+          <div className="stat-sub">из {contracts.length}</div>
         </div>
       </div>
 
-      <div className="grid-2">
+      <div className="grid-2" style={{ alignItems: 'start' }}>
         {/* Список договоров */}
         <div className="card" style={{ marginBottom: 0 }}>
           <div className="card-header"><span className="card-title">Договоры</span></div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {contractInfos.map(info => {
-              const sch = info.schedule;
+              const sch = info.schedule.filter(p => p.payment_type !== 'utilities');
+              const debt = sch.filter(p => p.status === 'debt').length;
               const paid = sch.filter(p => p.status === 'paid').length;
-              const debt = sch.filter(p => p.status === 'debt' || (p.status === 'pending' && isOverdue(p))).length;
-              const isSelected = selectedContract?.contract.id === info.contract.id;
+              const isSelected = selected?.contract.id === info.contract.id;
               return (
-                <div
-                  key={info.contract.id}
-                  onClick={() => setSelectedContract(info)}
+                <div key={info.contract.id} onClick={() => { setSelected(info); setChecked(new Set()); }}
                   style={{
                     padding: '12px 14px', borderRadius: 10, cursor: 'pointer',
-                    border: `1.5px solid ${isSelected ? '#2563EB' : '#E2E8F0'}`,
-                    background: isSelected ? '#EFF6FF' : '#fff',
+                    border: `1.5px solid ${isSelected ? '#2563EB' : debt > 0 ? '#FECACA' : '#E2E8F0'}`,
+                    background: isSelected ? '#EFF6FF' : debt > 0 ? '#FEF2F2' : '#fff',
                     transition: 'all .15s',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                  }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: '#0F172A' }}>{info.tenant?.name || '—'}</div>
-                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>{info.room?.name} · № {info.contract.number}</div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{info.tenant?.name || '—'}</div>
+                      <div style={{ fontSize: 11, color: '#64748B' }}>{info.room?.name} · № {info.contract.number}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#16A34A' }}>{paid}/{sch.length} мес.</div>
-                      {debt > 0 && <div style={{ fontSize: 11, color: '#DC2626', fontWeight: 600 }}>⚠ {debt} просроч.</div>}
+                      {debt > 0
+                        ? <div style={{ fontSize: 12, fontWeight: 700, color: '#DC2626' }}>⚠ {debt} мес. долг</div>
+                        : <div style={{ fontSize: 12, color: '#16A34A', fontWeight: 600 }}>✓ Без долгов</div>}
+                      <div style={{ fontSize: 11, color: '#94A3B8' }}>{paid}/{sch.length} мес. оплачено</div>
                     </div>
                   </div>
-                  <div style={{ marginTop: 8, height: 4, background: '#F1F5F9', borderRadius: 2, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${sch.length > 0 ? Math.round(paid / sch.length * 100) : 0}%`, background: debt > 0 ? '#EF4444' : '#22C55E', borderRadius: 2 }} />
+                  <div style={{ marginTop: 8, height: 4, background: '#E2E8F0', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${sch.length > 0 ? Math.round(paid/sch.length*100) : 0}%`, background: debt > 0 ? '#EF4444' : '#22C55E', borderRadius: 2 }} />
                   </div>
                 </div>
               );
@@ -199,113 +210,141 @@ export default function Finance() {
           </div>
         </div>
 
-        {/* Детали выбранного договора */}
-        {selectedContract ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {/* Детали договора */}
+        {selected ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {/* Статистика */}
             <div className="card" style={{ marginBottom: 0 }}>
               <div className="card-header">
                 <div>
-                  <div className="card-title">{selectedContract.tenant?.name}</div>
+                  <div className="card-title">{selected.tenant?.name}</div>
                   <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-                    {selectedContract.room?.name} · № {selectedContract.contract.number} · {selectedContract.contract.monthly_rent.toLocaleString('ru')} сом/мес
+                    {selected.room?.name} · № {selected.contract.number} · {selected.contract.monthly_rent.toLocaleString('ru')} сом/мес
                   </div>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
                 {[
-                  { label: 'Оплачено', value: paidMonths, sub: 'месяцев', color: '#16A34A' },
-                  { label: 'Долг', value: debtMonths, sub: 'месяцев', color: '#DC2626' },
-                  { label: 'Предстоит', value: pendingMonths, sub: 'месяцев', color: '#64748B' },
-                  { label: 'Получено', value: fmtShort(totalPaid), sub: `из ${fmtShort(totalDue)}`, color: '#2563EB' },
+                  { label: 'Оплачено месяцев', value: paidCount, color: '#16A34A' },
+                  { label: 'Долг (месяцев)', value: debtCount, color: '#DC2626' },
+                  { label: 'Получено', value: `${fmtShort(totalPaid)} сом`, color: '#2563EB' },
+                  { label: 'Долг (сумма)', value: `${fmtShort(totalDebt)} сом`, color: totalDebt > 0 ? '#DC2626' : '#16A34A' },
                 ].map(s => (
                   <div key={s.label} style={{ background: '#F8FAFC', borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
                     <div style={{ fontSize: 18, fontWeight: 700, color: s.color }}>{s.value}</div>
                     <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>{s.label}</div>
-                    <div style={{ fontSize: 10, color: '#94A3B8' }}>{s.sub}</div>
                   </div>
                 ))}
               </div>
-
-              {/* Прогресс */}
-              <div style={{ marginTop: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#64748B', marginBottom: 5 }}>
+              <div style={{ marginTop: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#64748B', marginBottom: 4 }}>
                   <span>Выполнение плана</span>
-                  <span style={{ fontWeight: 600, color: '#2563EB' }}>{totalDue > 0 ? Math.round(totalPaid / totalDue * 100) : 0}%</span>
+                  <span style={{ fontWeight: 600 }}>{totalDue > 0 ? Math.round(totalPaid/totalDue*100) : 0}%</span>
                 </div>
                 <div className="prog-track">
-                  <div className="prog-fill" style={{ width: `${totalDue > 0 ? Math.round(totalPaid / totalDue * 100) : 0}%`, background: '#2563EB' }} />
+                  <div className="prog-fill" style={{ width: `${totalDue > 0 ? Math.round(totalPaid/totalDue*100) : 0}%`, background: '#2563EB' }} />
                 </div>
               </div>
             </div>
 
-            {/* Календарь месяцев */}
+            {/* Таблица месяцев */}
             <div className="card" style={{ marginBottom: 0 }}>
-              <div className="card-header"><span className="card-title">План оплат по месяцам</span></div>
-
-              {/* Легенда */}
-              <div style={{ display: 'flex', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
-                {Object.entries(statusConfig).map(([key, cfg]) => (
-                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#64748B' }}>
-                    <div style={{ width: 10, height: 10, borderRadius: 2, background: cfg.bg, border: `1.5px solid ${cfg.color}` }} />
-                    {cfg.label}
-                  </div>
-                ))}
+              <div className="card-header">
+                <span className="card-title">График платежей</span>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {checked.size > 0 && (
+                    <span style={{ fontSize: 12, color: '#2563EB', fontWeight: 600 }}>
+                      Выбрано: {checked.size} мес. · {fmt(totalSelected)} сом
+                    </span>
+                  )}
+                  {unpaid.length > 0 && (
+                    checked.size === unpaid.length
+                      ? <button className="btn btn-secondary" style={{ fontSize: 11, padding: '4px 10px' }} onClick={clearAll}>Снять всё</button>
+                      : <button className="btn btn-secondary" style={{ fontSize: 11, padding: '4px 10px' }} onClick={selectAll}>Выбрать все долги</button>
+                  )}
+                  {checked.size > 0 && (
+                    <button className="btn btn-primary" onClick={openPayModal}>
+                      <i className="ti ti-credit-card" /> Оплатить выбранные ({checked.size})
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* Группировка по годам */}
-              {(() => {
-                const years = [...new Set(schedule.map(p => p.period_year!))].sort();
-                return years.map(year => (
-                  <div key={year} style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#64748B', marginBottom: 8 }}>{year}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 6 }}>
-                      {schedule.filter(p => p.period_year === year).map(p => {
-                        const overdue = isOverdue(p);
-                        const effectiveStatus = (p.status === 'pending' && overdue) ? 'debt' : p.status;
-                        const cfg = statusConfig[effectiveStatus] || statusConfig.pending;
-                        const isCurrent = p.period_year === today.getFullYear() && p.period_month === today.getMonth() + 1;
-                        return (
-                          <div
-                            key={p.id}
-                            onClick={() => effectiveStatus !== 'paid' && openPayModal(p)}
-                            style={{
-                              background: cfg.bg,
-                              border: `1.5px solid ${isCurrent ? '#2563EB' : cfg.color}`,
-                              borderRadius: 8,
-                              padding: '8px 4px',
-                              textAlign: 'center',
-                              cursor: effectiveStatus !== 'paid' ? 'pointer' : 'default',
-                              transition: 'transform .15s, box-shadow .15s',
-                              position: 'relative',
-                            }}
-                            title={effectiveStatus !== 'paid' ? 'Нажмите чтобы внести оплату' : 'Оплачено'}
-                            onMouseEnter={e => { if (effectiveStatus !== 'paid') (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'; }}
-                            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = ''; }}
-                          >
-                            <div style={{ fontSize: 11, fontWeight: 600, color: cfg.color }}>
-                              {MONTHS_SHORT[p.period_month! - 1]}
-                            </div>
-                            <div style={{ fontSize: 10, color: cfg.color, marginTop: 2 }}>
-                              {effectiveStatus === 'paid' ? '✓' : effectiveStatus === 'debt' ? '!' : '···'}
-                            </div>
-                            <div style={{ fontSize: 9, color: '#94A3B8', marginTop: 2 }}>
-                              {fmtShort(p.amount_due)}
-                            </div>
-                            {isCurrent && (
-                              <div style={{ position: 'absolute', top: -4, right: -4, width: 8, height: 8, background: '#2563EB', borderRadius: '50%', border: '2px solid #fff' }} />
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ));
-              })()}
-
-              {schedule.length === 0 && (
-                <div className="empty-state">Нет плана платежей</div>
+              {/* Подсказка */}
+              {unpaid.length > 0 && checked.size === 0 && (
+                <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12, color: '#1D4ED8' }}>
+                  <i className="ti ti-info-circle" style={{ marginRight: 6 }} />
+                  Отметьте галочками месяцы которые хотите оплатить — можно выбрать сразу несколько
+                </div>
               )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {rentSchedule.map(p => {
+                  const cfg = statusConfig[p.status] || statusConfig.pending;
+                  const remainder = p.amount_due - p.amount_paid;
+                  const isChecked = checked.has(p.id);
+                  const isPaid = p.status === 'paid';
+                  return (
+                    <div key={p.id}
+                      onClick={() => toggleCheck(p)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '12px 14px', borderRadius: 10,
+                        border: `1.5px solid ${isChecked ? '#2563EB' : isPaid ? '#E2E8F0' : cfg.color + '55'}`,
+                        background: isChecked ? '#EFF6FF' : cfg.bg,
+                        cursor: isPaid ? 'default' : 'pointer',
+                        transition: 'all .15s',
+                      }}>
+                      {/* Чекбокс */}
+                      <div style={{
+                        width: 20, height: 20, borderRadius: 4, flexShrink: 0,
+                        border: `2px solid ${isPaid ? '#CBD5E1' : isChecked ? '#2563EB' : '#CBD5E1'}`,
+                        background: isChecked ? '#2563EB' : '#fff',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {(isChecked || isPaid) && (
+                          <i className="ti ti-check" style={{ fontSize: 12, color: isPaid ? '#16A34A' : '#fff' }} />
+                        )}
+                      </div>
+
+                      {/* Месяц */}
+                      <div style={{ minWidth: 100, fontWeight: 600, fontSize: 13, color: '#0F172A' }}>
+                        {MONTHS[p.period_month! - 1]} {p.period_year}
+                      </div>
+
+                      {/* Начислено */}
+                      <div style={{ flex: 1, fontSize: 12, color: '#64748B' }}>
+                        Начислено: <b style={{ color: '#0F172A' }}>{fmt(p.amount_due)} сом</b>
+                        {p.amount_paid > 0 && !isPaid && (
+                          <span style={{ marginLeft: 8, color: '#16A34A' }}>· оплачено {fmt(p.amount_paid)} сом</span>
+                        )}
+                      </div>
+
+                      {/* Остаток */}
+                      <div style={{ textAlign: 'right', minWidth: 120 }}>
+                        {isPaid ? (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#16A34A' }}>✓ Оплачено</div>
+                        ) : (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: cfg.color }}>
+                            {fmt(remainder)} сом
+                          </div>
+                        )}
+                        {p.payment_date && (
+                          <div style={{ fontSize: 11, color: '#94A3B8' }}>
+                            {new Date(p.payment_date).toLocaleDateString('ru')}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Статус */}
+                      <span className={`pill ${cfg.pill}`} style={{ minWidth: 80, justifyContent: 'center' }}>
+                        {cfg.label}
+                      </span>
+                    </div>
+                  );
+                })}
+                {rentSchedule.length === 0 && <div className="empty-state">Нет данных о платежах</div>}
+              </div>
             </div>
           </div>
         ) : (
@@ -315,148 +354,75 @@ export default function Finance() {
         )}
       </div>
 
-      {/* История всех платежей */}
-      <div className="card" style={{ marginTop: 18 }}>
-        <div className="card-header">
-          <span className="card-title">
-            {selectedContract
-              ? `История платежей — ${selectedContract.tenant?.name}`
-              : 'История платежей'}
-          </span>
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Период</th>
-                <th>Начислено</th>
-                <th>Оплачено</th>
-                <th>Остаток</th>
-                <th>Статус</th>
-                <th>Дата оплаты</th>
-                <th>Комментарий</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {(selectedContract ? selectedContract.schedule : allSchedules)
-                .sort((a, b) => {
-                  if (a.period_year !== b.period_year) return b.period_year! - a.period_year!;
-                  return b.period_month! - a.period_month!;
-                })
-                .map(p => {
-                  const overdue = isOverdue(p);
-                  const effectiveStatus = (p.status === 'pending' && overdue) ? 'debt' : p.status;
-                  const cfg = statusConfig[effectiveStatus] || statusConfig.pending;
-                  const remainder = p.amount_due - p.amount_paid;
-                  return (
-                    <tr key={p.id}>
-                      <td style={{ fontWeight: 500 }}>
-                        {MONTHS[p.period_month! - 1]} {p.period_year}
-                      </td>
-                      <td>{fmt(p.amount_due)} сом</td>
-                      <td style={{ color: '#16A34A', fontWeight: p.amount_paid > 0 ? 600 : undefined }}>
-                        {p.amount_paid > 0 ? `${fmt(p.amount_paid)} сом` : '—'}
-                      </td>
-                      <td style={{ color: remainder > 0 ? '#DC2626' : '#16A34A', fontWeight: 600 }}>
-                        {remainder > 0 ? `${fmt(remainder)} сом` : '✓'}
-                      </td>
-                      <td><span className={`pill ${cfg.pill}`}>{cfg.label}</span></td>
-                      <td style={{ color: '#64748B' }}>
-                        {p.payment_date ? new Date(p.payment_date).toLocaleDateString('ru') : '—'}
-                      </td>
-                      <td style={{ color: '#94A3B8', fontSize: 12 }}>{p.comment || '—'}</td>
-                      <td>
-                        {effectiveStatus !== 'paid' && (
-                          <button
-                            className="btn"
-                            style={{ background: '#F0FDF4', color: '#16A34A', border: '1px solid #86EFAC', fontSize: 11, padding: '4px 10px' }}
-                            onClick={() => openPayModal(p)}
-                          >
-                            <i className="ti ti-check" /> Внести
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              {(selectedContract ? selectedContract.schedule : allSchedules).length === 0 && (
-                <tr><td colSpan={8} className="empty-state">Нет данных</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Modal: Внести оплату */}
-      <div className={`modal-overlay${showPayModal ? ' open' : ''}`}
-        onClick={e => e.target === e.currentTarget && setShowPayModal(null)}>
-        <div className="modal" style={{ width: 420 }}>
+      {/* Modal: Оплата выбранных месяцев */}
+      <div className={`modal-overlay${showModal ? ' open' : ''}`}
+        onClick={e => e.target === e.currentTarget && setShowModal(false)}>
+        <div className="modal" style={{ width: 500 }}>
           <div className="modal-header">
             <div className="modal-title">
-              <i className="ti ti-credit-card" />
-              Оплата — {showPayModal ? `${MONTHS[showPayModal.period_month! - 1]} ${showPayModal.period_year}` : ''}
+              <i className="ti ti-credit-card" /> Оплата — {selected?.tenant?.name}
             </div>
-            <button className="modal-close" onClick={() => setShowPayModal(null)}>×</button>
+            <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
           </div>
           <div className="modal-body">
-            {showPayModal && (
-              <div style={{ background: '#F8FAFC', borderRadius: 10, padding: '12px 16px', marginBottom: 16, fontSize: 13 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 8, borderBottom: '1px solid #E2E8F0' }}>
-                  <span style={{ color: '#64748B' }}>Начислено</span>
-                  <span style={{ fontWeight: 600 }}>{fmt(showPayModal.amount_due)} сом</span>
-                </div>
-                {showPayModal.amount_paid > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #E2E8F0' }}>
-                    <span style={{ color: '#64748B' }}>Уже оплачено</span>
-                    <span style={{ fontWeight: 600, color: '#16A34A' }}>{fmt(showPayModal.amount_paid)} сом</span>
+            {/* Список выбранных месяцев */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+              {checkedPayments.map(p => {
+                const remainder = p.amount_due - p.amount_paid;
+                return (
+                  <div key={p.id} style={{ background: '#F8FAFC', borderRadius: 8, padding: '10px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>
+                        {MONTHS[p.period_month! - 1]} {p.period_year}
+                      </span>
+                      <span style={{ fontSize: 12, color: '#64748B' }}>
+                        Долг: <b style={{ color: '#DC2626' }}>{fmt(remainder)} сом</b>
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#64748B', whiteSpace: 'nowrap' }}>Вносим:</span>
+                      <input
+                        type="number"
+                        value={customAmounts[p.id] ?? remainder}
+                        onChange={e => setCustomAmounts(prev => ({ ...prev, [p.id]: e.target.value }))}
+                        style={{ flex: 1, padding: '6px 10px', border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 14, fontWeight: 600, fontFamily: 'inherit' }}
+                      />
+                      <span style={{ fontSize: 12, color: '#64748B', whiteSpace: 'nowrap' }}>сом</span>
+                    </div>
                   </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 8 }}>
-                  <span style={{ color: '#64748B' }}>Остаток к оплате</span>
-                  <span style={{ fontWeight: 700, color: '#DC2626' }}>{fmt(showPayModal.amount_due - showPayModal.amount_paid)} сом</span>
-                </div>
-              </div>
-            )}
-            <div className="mf-grid">
-              <div className="mf-field">
-                <label>Сумма оплаты (сом)</label>
-                <input
-                  type="number"
-                  value={payForm.amount}
-                  onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
-                  style={{ fontSize: 18, fontWeight: 600 }}
-                  placeholder="Введите сумму"
-                />
-                {showPayModal && payForm.amount && (
-                  <div className="mf-hint">
-                    Итого будет оплачено: {fmt(showPayModal.amount_paid + Number(payForm.amount))} из {fmt(showPayModal.amount_due)} сом
-                  </div>
-                )}
-              </div>
+                );
+              })}
+            </div>
+
+            {/* Итого */}
+            <div style={{ background: '#EFF6FF', border: '1.5px solid #93C5FD', borderRadius: 10, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#1D4ED8' }}>Итого к зачислению</span>
+              <span style={{ fontSize: 22, fontWeight: 700, color: '#2563EB' }}>{fmt(totalSelected)} сом</span>
+            </div>
+
+            <div className="mf-grid mf-2">
               <div className="mf-field">
                 <label>Дата поступления</label>
-                <input type="date" value={payForm.payment_date} onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))} />
+                <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} />
               </div>
               <div className="mf-field">
                 <label>Комментарий (необязательно)</label>
-                <input value={payForm.comment} onChange={e => setPayForm(f => ({ ...f, comment: e.target.value }))} placeholder="п/п №, назначение..." />
+                <input value={comment} onChange={e => setComment(e.target.value)} placeholder="п/п №, банк..." />
               </div>
             </div>
+
             <div className={`success-banner${success ? ' show' : ''}`}>
-              <div className="success-title"><i className="ti ti-circle-check" style={{ fontSize: 20 }} />Платёж зафиксирован</div>
-              <div style={{ fontSize: 12, color: '#16A34A' }}>Статус месяца обновлён.</div>
+              <div className="success-title">
+                <i className="ti ti-circle-check" style={{ fontSize: 20 }} />
+                Платежи зафиксированы — {checkedPayments.length} мес.
+              </div>
             </div>
           </div>
           <div className="modal-footer">
-            <button
-              className="btn btn-green"
-              onClick={registerPayment}
-              disabled={loading || success || !payForm.amount || !payForm.payment_date}
-            >
-              <i className="ti ti-check" /> {loading ? 'Сохранение...' : 'Сохранить'}
+            <button className="btn btn-primary" onClick={registerPayments} disabled={loading || success || totalSelected <= 0}>
+              <i className="ti ti-check" /> {loading ? 'Сохранение...' : `Зафиксировать ${fmt(totalSelected)} сом`}
             </button>
-            <button className="btn btn-secondary" onClick={() => setShowPayModal(null)}>Отмена</button>
+            <button className="btn btn-secondary" onClick={() => setShowModal(false)}>Отмена</button>
           </div>
         </div>
       </div>

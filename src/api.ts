@@ -9,8 +9,41 @@ export default api;
 export type RoomStatus = 'free' | 'occupied' | 'reserved' | 'repair';
 export type ContractStatus = 'active' | 'expiring' | 'terminated' | 'expired';
 export type PaymentStatus = 'paid' | 'partial' | 'debt' | 'pending';
-export type PaymentType = 'rent' | 'deposit' | 'utility' | 'penalty' | 'other';
+export type PaymentType = 'rent' | 'deposit' | 'utilities' | 'penalty' | 'other';
 export type UtilityType = 'electricity' | 'water_cold' | 'water_hot' | 'heat' | 'internet' | 'other';
+
+export interface UtilityReading {
+  id: number;
+  room_id: number;
+  utility_type: UtilityType;
+  meter_number?: string;
+  period_month: number;
+  period_year: number;
+  prev_reading?: number;
+  curr_reading?: number;
+  consumption?: number;
+  tariff?: number;
+  amount?: number;
+  is_fixed: boolean;
+  fixed_amount?: number;
+  created_at: string;
+}
+
+export interface UtilityBill {
+  id: number;
+  contract_id: number;
+  period_month: number;
+  period_year: number;
+  electricity: number;
+  water_cold: number;
+  water_hot: number;
+  heat: number;
+  internet: number;
+  other: number;
+  total: number;
+  is_sent: boolean;
+  created_at: string;
+}
 
 export interface Room {
   id: number;
@@ -27,11 +60,13 @@ export interface Room {
 export interface Tenant {
   id: number;
   name: string;
+  tenant_type?: string;
   inn?: string;
-  contact_person?: string;
+  contact_name?: string;
   phone?: string;
   email?: string;
   address?: string;
+  notes?: string;
 }
 
 export interface Contract {
@@ -161,7 +196,7 @@ export const paymentsApi = {
 };
 
 export const utilitiesApi = {
-  addReading: (data: Omit<UtilityReading, 'id' | 'consumption' | 'amount'>) =>
+  addReading: (data: Omit<UtilityReading, 'id' | 'consumption' | 'amount' | 'created_at'>) =>
     api.post<UtilityReading>('/utilities/readings/', data).then(r => r.data),
   listReadings: (params?: { room_id?: number; period_month?: number; period_year?: number }) =>
     api.get<UtilityReading[]>('/utilities/readings/', { params }).then(r => r.data),

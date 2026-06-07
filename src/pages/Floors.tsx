@@ -9,7 +9,21 @@ const statusLabel: Record<string, string> = {
   occupied: 'Занято', free: 'Свободно', reserved: 'Резерв', repair: 'Ремонт',
 };
 
-type Modal = 'create-room' | 'edit-room' | 'status' | 'contract' | 'terminate' | null;
+const contractStatusLabel: Record<string, string> = {
+  active: 'Активный', expiring: 'Истекает', terminated: 'Расторгнут', expired: 'Истёк',
+};
+const contractStatusPill: Record<string, string> = {
+  active: 'pill-act', expiring: 'pill-soon', terminated: 'pill-term', expired: 'pill-exp',
+};
+const paymentStatusLabel: Record<string, string> = {
+  paid: 'Оплачено', partial: 'Частично', debt: 'Долг', pending: 'Предстоит',
+};
+const paymentStatusPill: Record<string, string> = {
+  paid: 'pill-paid', partial: 'pill-part', debt: 'pill-debt', pending: 'pill-term',
+};
+const MONTHS_SHORT = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+
+type Modal = 'create-room' | 'edit-room' | 'status' | 'contract' | 'terminate' | 'history' | null;
 
 export default function Floors() {
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -20,6 +34,8 @@ export default function Floors() {
   const [modal, setModal] = useState<Modal>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
+  const [history, setHistory] = useState<any>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   // forms
   const [roomForm, setRoomForm] = useState({ name: '', floor: 1, area: '', base_rate: '', description: '' });
@@ -73,6 +89,14 @@ export default function Floors() {
     }
     if (m === 'terminate') {
       setTerminateForm({ terminated_at: new Date().toISOString().slice(0, 10), termination_reason: '', termination_initiator: 'Арендатор', penalty: '0' });
+    }
+    if (m === 'history' && room) {
+      setHistory(null);
+      setHistoryLoading(true);
+      roomsApi.fullHistory(room.id).then(data => {
+        setHistory(data);
+        setHistoryLoading(false);
+      }).catch(() => setHistoryLoading(false));
     }
   };
 
@@ -261,6 +285,13 @@ export default function Floors() {
                 title="Редактировать"
                 desc="Изменить название, площадь или базовую ставку"
                 onClick={() => openModal('edit-room', selected)}
+              />
+              {/* История */}
+              <ActionCard
+                icon="ti-history" iconBg="#EDE9FE" iconColor="#7C3AED"
+                title="История помещения"
+                desc="Все арендаторы, платежи и смены статуса"
+                onClick={() => openModal('history', selected)}
               />
               {/* Удалить */}
               {selected.status === 'free' && (
@@ -477,6 +508,149 @@ export default function Floors() {
               <i className="ti ti-check" /> {loading ? 'Расторжение...' : 'Расторгнуть договор'}
             </button>
             <button className="btn btn-secondary" onClick={closeModal}>Отмена</button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Modal: История помещения ── */}
+      <div className={`modal-overlay${modal === 'history' ? ' open' : ''}`}
+        onClick={e => e.target === e.currentTarget && closeModal()}>
+        <div className="modal" style={{ width: 720 }}>
+          <div className="modal-header">
+            <div className="modal-title">
+              <i className="ti ti-history" style={{ color: '#7C3AED' }} />
+              История — {history?.room?.name || selected?.name}
+            </div>
+            <button className="modal-close" onClick={closeModal}>×</button>
+          </div>
+          <div className="modal-body">
+            {historyLoading && (
+              <div className="empty-state">Загрузка истории...</div>
+            )}
+
+            {history && !historyLoading && (
+              <>
+                {/* Общая статистика */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+                  {[
+                    { label: 'Всего договоров', value: history.contracts.length, color: '#2563EB' },
+                    { label: 'Арендаторов', value: new Set(history.contracts.map((c: any) => c.tenant.id)).size, color: '#7C3AED' },
+                    { label: 'Получено всего', value: `${history.contracts.reduce((s: number, c: any) => s + c.payments_summary.total_paid, 0).toLocaleString('ru')} сом`, color: '#16A34A' },
+                    { label: 'Долг', value: `${history.contracts.reduce((s: number, c: any) => s + c.payments_summary.debt, 0).toLocaleString('ru')} сом`, color: '#DC2626' },
+                  ].map(s => (
+                    <div key={s.label} style={{ background: '#F8FAFC', borderRadius: 8, padding: '10px 14px' }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Договоры */}
+                {history.contracts.length === 0 ? (
+                  <div className="empty-state">По этому помещению договоров не было</div>
+                ) : (
+                  history.contracts.map((c: any) => (
+                    <div key={c.id} style={{ border: '1px solid #E2E8F0', borderRadius: 12, marginBottom: 14, overflow: 'hidden' }}>
+                      {/* Шапка договора */}
+                      <div style={{ background: '#F8FAFC', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: '#0F172A' }}>
+                            {c.tenant.name}
+                            <span className={`pill ${contractStatusPill[c.status] || 'pill-term'}`} style={{ marginLeft: 8 }}>
+                              {contractStatusLabel[c.status] || c.status}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+                            Договор № {c.number}
+                            {c.tenant.inn && ` · ИНН ${c.tenant.inn}`}
+                            {c.tenant.phone && ` · ${c.tenant.phone}`}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right', fontSize: 12, color: '#64748B' }}>
+                          <div>{c.start_date ? new Date(c.start_date).toLocaleDateString('ru') : '—'} — {c.end_date ? new Date(c.end_date).toLocaleDateString('ru') : '—'}</div>
+                          <div style={{ fontWeight: 600, color: '#0F172A', marginTop: 2 }}>{c.monthly_rent?.toLocaleString('ru')} сом/мес</div>
+                          {c.termination_reason && <div style={{ color: '#DC2626', marginTop: 2 }}>Причина: {c.termination_reason}</div>}
+                        </div>
+                      </div>
+
+                      {/* Финансовая сводка */}
+                      <div style={{ padding: '10px 16px', display: 'flex', gap: 20, borderBottom: '1px solid #F1F5F9', flexWrap: 'wrap' }}>
+                        {[
+                          { label: 'Месяцев', value: `${c.payments_summary.paid_months} / ${c.payments_summary.total_months}` },
+                          { label: 'Начислено', value: `${c.payments_summary.total_due.toLocaleString('ru')} сом` },
+                          { label: 'Оплачено', value: `${c.payments_summary.total_paid.toLocaleString('ru')} сом`, color: '#16A34A' },
+                          { label: 'Долг', value: `${c.payments_summary.debt.toLocaleString('ru')} сом`, color: c.payments_summary.debt > 0 ? '#DC2626' : '#16A34A' },
+                        ].map(f => (
+                          <div key={f.label}>
+                            <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600, textTransform: 'uppercase' }}>{f.label}</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: f.color || '#0F172A', marginTop: 1 }}>{f.value}</div>
+                          </div>
+                        ))}
+                        {/* Прогресс */}
+                        <div style={{ flex: 1, minWidth: 120, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                          <div className="prog-track" style={{ height: 6 }}>
+                            <div className="prog-fill" style={{
+                              width: `${c.payments_summary.total_due > 0 ? Math.round(c.payments_summary.total_paid / c.payments_summary.total_due * 100) : 0}%`,
+                              background: c.payments_summary.debt > 0 ? '#EF4444' : '#22C55E'
+                            }} />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Сетка месяцев */}
+                      {c.payments.length > 0 && (
+                        <div style={{ padding: '10px 16px' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {c.payments.map((p: any) => {
+                              const cfg: Record<string, { bg: string; color: string; icon: string }> = {
+                                paid:    { bg: '#DCFCE7', color: '#16A34A', icon: '✓' },
+                                partial: { bg: '#FEF3C7', color: '#D97706', icon: '~' },
+                                debt:    { bg: '#FEE2E2', color: '#DC2626', icon: '!' },
+                                pending: { bg: '#F1F5F9', color: '#94A3B8', icon: '·' },
+                              };
+                              const s = cfg[p.status] || cfg.pending;
+                              return (
+                                <div key={p.id} title={`${MONTHS_SHORT[(p.period_month || 1) - 1]} ${p.period_year} · ${p.status === 'paid' ? 'Оплачено' : `Долг ${(p.amount_due - p.amount_paid).toLocaleString('ru')} сом`}`}
+                                  style={{ background: s.bg, color: s.color, borderRadius: 4, padding: '3px 6px', fontSize: 10, fontWeight: 700, cursor: 'default' }}>
+                                  {MONTHS_SHORT[(p.period_month || 1) - 1]} {p.period_year} {s.icon}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+
+                {/* История смен статуса */}
+                {history.status_history.length > 0 && (
+                  <>
+                    <div className="mf-section" style={{ marginTop: 8 }}>История статусов</div>
+                    <div className="timeline">
+                      {history.status_history.map((h: any, i: number) => (
+                        <div key={i} className="tl-item">
+                          <div className="tl-date">{h.changed_at ? new Date(h.changed_at).toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}</div>
+                          <div className="tl-title">
+                            <span className={`pill ${statusClass[h.old_status] === 's-occ' ? 'pill-occ' : statusClass[h.old_status] === 's-free' ? 'pill-free' : statusClass[h.old_status] === 's-res' ? 'pill-res' : 'pill-rep'}`} style={{ marginRight: 6 }}>
+                              {statusLabel[h.old_status] || h.old_status}
+                            </span>
+                            →
+                            <span className={`pill ${statusClass[h.new_status] === 's-occ' ? 'pill-occ' : statusClass[h.new_status] === 's-free' ? 'pill-free' : statusClass[h.new_status] === 's-res' ? 'pill-res' : 'pill-rep'}`} style={{ marginLeft: 6 }}>
+                              {statusLabel[h.new_status] || h.new_status}
+                            </span>
+                          </div>
+                          {h.reason && <div className="tl-sub">{h.reason}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-secondary" onClick={closeModal}>Закрыть</button>
           </div>
         </div>
       </div>

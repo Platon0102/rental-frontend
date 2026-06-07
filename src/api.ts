@@ -121,6 +121,7 @@ export const roomsApi = {
   changeStatus: (id: number, data: { new_status: RoomStatus; reason?: string; repair_start?: string; repair_end?: string }) =>
     api.post<Room>(`/rooms/${id}/status`, data).then(r => r.data),
   history: (id: number) => api.get(`/rooms/${id}/history`).then(r => r.data),
+  fullHistory: (id: number) => api.get(`/rooms/${id}/full-history`).then(r => r.data),
   delete: (id: number) => api.delete(`/rooms/${id}`),
 };
 

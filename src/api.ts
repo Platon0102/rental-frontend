@@ -4,6 +4,26 @@ const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || 'http://loca
 
 export default api;
 
+// Simple cache: stores { data, expiresAt }
+const cache = new Map<string, { data: unknown; expiresAt: number }>();
+const TTL = 30_000; // 30 seconds
+
+export function cachedGet<T>(url: string, params?: Record<string, unknown>): Promise<T> {
+  const key = url + (params ? JSON.stringify(params) : '');
+  const cached = cache.get(key);
+  if (cached && Date.now() < cached.expiresAt) return Promise.resolve(cached.data as T);
+  return api.get<T>(url, { params }).then(r => {
+    cache.set(key, { data: r.data, expiresAt: Date.now() + TTL });
+    return r.data;
+  });
+}
+
+export function invalidateCache(prefix: string) {
+  for (const key of cache.keys()) {
+    if (key.startsWith(prefix)) cache.delete(key);
+  }
+}
+
 // --- Types ---
 
 export type RoomStatus = 'free' | 'occupied' | 'reserved' | 'repair';
@@ -149,23 +169,25 @@ export interface DashboardStats {
 
 export const roomsApi = {
   list: (floor?: number, status?: RoomStatus) =>
-    api.get<Room[]>('/rooms/', { params: { floor, status } }).then(r => r.data),
-  get: (id: number) => api.get<Room>(`/rooms/${id}`).then(r => r.data),
-  create: (data: Omit<Room, 'id'>) => api.post<Room>('/rooms/', data).then(r => r.data),
-  update: (id: number, data: Partial<Room>) => api.patch<Room>(`/rooms/${id}`, data).then(r => r.data),
+    cachedGet<Room[]>('/rooms/', { floor, status }),
+  get: (id: number) => cachedGet<Room>(`/rooms/${id}`),
+  create: (data: Omit<Room, 'id'>) => api.post<Room>('/rooms/', data).then(r => { invalidateCache('/rooms'); return r.data; }),
+  update: (id: number, data: Partial<Room>) => api.patch<Room>(`/rooms/${id}`, data).then(r => { invalidateCache('/rooms'); return r.data; }),
   changeStatus: (id: number, data: { new_status: RoomStatus; reason?: string; repair_start?: string; repair_end?: string }) =>
-    api.post<Room>(`/rooms/${id}/status`, data).then(r => r.data),
+    api.post<Room>(`/rooms/${id}/status`, data).then(r => { invalidateCache('/rooms'); return r.data; }),
   history: (id: number) => api.get(`/rooms/${id}/history`).then(r => r.data),
   fullHistory: (id: number) => api.get(`/rooms/${id}/full-history`).then(r => r.data),
-  delete: (id: number) => api.delete(`/rooms/${id}`),
+  delete: (id: number) => api.delete(`/rooms/${id}`).then(r => { invalidateCache('/rooms'); return r; }),
 };
 
 export const tenantsApi = {
-  list: (search?: string) => api.get<Tenant[]>('/tenants/', { params: { search } }).then(r => r.data),
-  get: (id: number) => api.get<Tenant>(`/tenants/${id}`).then(r => r.data),
-  create: (data: Omit<Tenant, 'id'>) => api.post<Tenant>('/tenants/', data).then(r => r.data),
-  update: (id: number, data: Partial<Tenant>) => api.patch<Tenant>(`/tenants/${id}`, data).then(r => r.data),
-  delete: (id: number) => api.delete(`/tenants/${id}`),
+  list: (search?: string) => search
+    ? api.get<Tenant[]>('/tenants/', { params: { search } }).then(r => r.data)
+    : cachedGet<Tenant[]>('/tenants/'),
+  get: (id: number) => cachedGet<Tenant>(`/tenants/${id}`),
+  create: (data: Omit<Tenant, 'id'>) => api.post<Tenant>('/tenants/', data).then(r => { invalidateCache('/tenants'); return r.data; }),
+  update: (id: number, data: Partial<Tenant>) => api.patch<Tenant>(`/tenants/${id}`, data).then(r => { invalidateCache('/tenants'); return r.data; }),
+  delete: (id: number) => api.delete(`/tenants/${id}`).then(r => { invalidateCache('/tenants'); return r; }),
 };
 
 export const contractsApi = {

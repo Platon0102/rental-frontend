@@ -22,7 +22,7 @@ export default function Login() {
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8FAFC' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F1F5F9', zIndex: 9999 }}>
       <div className="card" style={{ width: 380, padding: '40px 36px' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{ fontSize: 22, fontWeight: 700, color: '#1E293B' }}>БЦ «Золотой»</div>

@@ -25,11 +25,13 @@ const rolePill: Record<string, string> = {
   accountant: 'pill-term',
 };
 
+interface BC { id: number; name: string; }
 const EMPTY = { email: '', password: '', full_name: '', role: 'manager', business_center_id: '' };
 
 export default function Users() {
   const { isAdmin, isSuperadmin } = useRole();
   const [users, setUsers] = useState<User[]>([]);
+  const [bcs, setBcs] = useState<BC[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
@@ -42,7 +44,12 @@ export default function Users() {
     api.get<User[]>('/auth/users').then(r => setUsers(r.data)).finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    if (isSuperadmin) {
+      api.get<BC[]>('/business-centers/').then(r => setBcs(r.data)).catch(() => {});
+    }
+  }, []);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -217,9 +224,12 @@ export default function Users() {
               </div>
               {isSuperadmin && (
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: '#475569', display: 'block', marginBottom: 4 }}>ID бизнес-центра</label>
-                  <input className="input" style={{ width: '100%' }} type="number" placeholder="1"
-                    value={form.business_center_id} onChange={e => setForm(f => ({ ...f, business_center_id: e.target.value }))} />
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#475569', display: 'block', marginBottom: 4 }}>Бизнес-центр *</label>
+                  <select className="input" style={{ width: '100%' }} required
+                    value={form.business_center_id} onChange={e => setForm(f => ({ ...f, business_center_id: e.target.value }))}>
+                    <option value="">— выберите БЦ —</option>
+                    {bcs.map(bc => <option key={bc.id} value={bc.id}>{bc.name}</option>)}
+                  </select>
                 </div>
               )}
               {error && (

@@ -15,12 +15,6 @@ const contractStatusLabel: Record<string, string> = {
 const contractStatusPill: Record<string, string> = {
   active: 'pill-act', expiring: 'pill-soon', terminated: 'pill-term', expired: 'pill-exp',
 };
-const paymentStatusLabel: Record<string, string> = {
-  paid: 'Оплачено', partial: 'Частично', debt: 'Долг', pending: 'Предстоит',
-};
-const paymentStatusPill: Record<string, string> = {
-  paid: 'pill-paid', partial: 'pill-part', debt: 'pill-debt', pending: 'pill-term',
-};
 const MONTHS_SHORT = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
 
 type Modal = 'create-room' | 'edit-room' | 'status' | 'contract' | 'terminate' | 'history' | null;

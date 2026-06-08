@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { dashboardApi, contractsApi } from '../api';
+import { dashboardApi } from '../api';
 
 export default function Reports() {
   const [stats, setStats] = useState<any>(null);
@@ -14,8 +14,6 @@ export default function Reports() {
 
   const totalDue = revenue.reduce((s, r) => s + r.due, 0);
   const totalPaid = revenue.reduce((s, r) => s + r.paid, 0);
-  const maxFloorPct = Math.max(...floors.map(f => f.pct), 1);
-
   const fmt = (n: number) => n.toLocaleString('ru');
 
   return (

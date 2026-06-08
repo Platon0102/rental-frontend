@@ -25,7 +25,7 @@ export default function Notifications() {
       paymentsApi.list().catch(() => [] as Payment[]),
       tenantsApi.list().catch(() => [] as Tenant[]),
       roomsApi.list().catch(() => [] as Room[]),
-    ]).then(([expiring, allPayments, tenants, rooms]) => {
+    ]).then(([expiring, allPayments]) => {
       const notifs: NotifItem[] = [];
 
       // Просроченные платежи (debt или pending с прошедшим месяцем)

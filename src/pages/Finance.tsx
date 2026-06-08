@@ -20,8 +20,8 @@ interface ContractInfo {
 
 export default function Finance() {
   const [contracts, setContracts] = useState<Contract[]>([]);
-  const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [rooms, setRooms] = useState<Room[]>([]);
+  const [, setTenants] = useState<Tenant[]>([]);
+  const [, setRooms] = useState<Room[]>([]);
   const [contractInfos, setContractInfos] = useState<ContractInfo[]>([]);
   const [selected, setSelected] = useState<ContractInfo | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());

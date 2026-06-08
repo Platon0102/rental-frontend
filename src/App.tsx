@@ -11,6 +11,7 @@ import Reports from './pages/Reports';
 import Utilities from './pages/Utilities';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
+import Users from './pages/Users';
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth();
@@ -37,6 +38,7 @@ function ProtectedRoutes() {
         <Route path="/utilities" element={<Utilities />} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/users" element={<Users />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

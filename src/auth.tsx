@@ -14,6 +14,7 @@ export interface AuthUser {
 interface AuthCtx {
   user: AuthUser | null;
   token: string | null;
+  bcName: string;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   loading: boolean;
@@ -24,13 +25,19 @@ const Ctx = createContext<AuthCtx>(null!);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
+  const [bcName, setBcName] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (token) {
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       api.get('/auth/me')
-        .then(r => setUser(r.data))
+        .then(r => {
+          setUser(r.data);
+          if (r.data.business_center_id) {
+            api.get('/business-centers/my').then(bc => setBcName(bc.data.name)).catch(() => {});
+          }
+        })
         .catch(() => { localStorage.removeItem('token'); setToken(null); })
         .finally(() => setLoading(false));
     } else {
@@ -48,6 +55,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`;
     setToken(data.access_token);
     setUser(data.user);
+    if (data.user.business_center_id) {
+      api.get('/business-centers/my').then(bc => setBcName(bc.data.name)).catch(() => {});
+    }
   }
 
   function logout() {
@@ -55,9 +65,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     delete api.defaults.headers.common['Authorization'];
     setToken(null);
     setUser(null);
+    setBcName('');
   }
 
-  return <Ctx.Provider value={{ user, token, login, logout, loading }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, token, bcName, login, logout, loading }}>{children}</Ctx.Provider>;
 }
 
 export function useAuth() {

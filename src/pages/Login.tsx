@@ -25,7 +25,7 @@ export default function Login() {
     <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F1F5F9', zIndex: 9999 }}>
       <div className="card" style={{ width: 380, padding: '40px 36px' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#1E293B' }}>БЦ «Золотой»</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: '#1E293B' }}>RentLine</div>
           <div style={{ fontSize: 13, color: '#94A3B8', marginTop: 4 }}>Система управления арендой</div>
         </div>
 

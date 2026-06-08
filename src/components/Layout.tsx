@@ -58,7 +58,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const notifCount = useNotifCount();
-  const { user, logout } = useAuth();
+  const { user, logout, bcName } = useAuth();
 
   const initials = user?.full_name
     ? user.full_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
@@ -81,8 +81,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div style={{ display: 'flex', width: '100%', height: '100vh', overflow: 'hidden' }}>
       <nav className="sidebar">
         <div className="sidebar-logo">
-          <div className="name">БЦ «Золотой»</div>
-          <div className="sub">Система учёта аренды · MVP</div>
+          <div className="name">{bcName || 'RentLine'}</div>
+          <div className="sub">Система управления арендой</div>
         </div>
 
         <div className="nav-section">Главное</div>
@@ -149,7 +149,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <div className="main">
         <header className="topbar">
           <div className="topbar-left">
-            <span className="topbar-title">{titles[location.pathname] || 'БЦ «Золотой»'}</span>
+            <span className="topbar-title">{titles[location.pathname] || 'RentLine'}</span>
           </div>
           <div className="topbar-right">
             <span style={{ fontSize: 12, color: '#94A3B8', fontWeight: 500 }}>{currentMonth}</span>

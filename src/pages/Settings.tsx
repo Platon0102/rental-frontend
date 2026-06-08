@@ -4,7 +4,7 @@ import api from '../api';
 export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [form, setForm] = useState({
-    name: 'Бизнес-центр «Золотой»',
+    name: '',
     notify30: true, notify60: true, notify90: true,
   });
 

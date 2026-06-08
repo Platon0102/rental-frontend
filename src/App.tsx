@@ -12,6 +12,7 @@ import Utilities from './pages/Utilities';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
 import Users from './pages/Users';
+import BusinessCenters from './pages/BusinessCenters';
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth();
@@ -39,6 +40,7 @@ function ProtectedRoutes() {
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/users" element={<Users />} />
+        <Route path="/business-centers" element={<BusinessCenters />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

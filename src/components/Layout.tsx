@@ -74,6 +74,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     '/reports': 'Отчёты',
     '/notifications': 'Уведомления',
     '/users': 'Пользователи',
+    '/business-centers': 'Бизнес-центры',
     '/settings': 'Настройки',
   };
 
@@ -117,6 +118,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <i className="ti ti-bell" />Уведомления
           {notifCount > 0 && <span className="nav-badge">{notifCount}</span>}
         </NavLink>
+        {user?.role === 'superadmin' && (
+          <NavLink to="/business-centers" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
+            <i className="ti ti-building-skyscraper" />Бизнес-центры
+          </NavLink>
+        )}
         {(user?.role === 'superadmin' || user?.role === 'bc_admin') && (
           <NavLink to="/users" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}>
             <i className="ti ti-users-group" />Пользователи

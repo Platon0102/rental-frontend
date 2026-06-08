@@ -2,6 +2,14 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { contractsApi, paymentsApi } from '../api';
 import { isDismissed } from '../utils/notifications';
+import { useAuth } from '../auth';
+
+const roleLabel: Record<string, string> = {
+  superadmin: 'Суперадмин',
+  bc_admin: 'Администратор БЦ',
+  manager: 'Менеджер',
+  accountant: 'Бухгалтер',
+};
 
 const now = new Date();
 const monthNames = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -50,6 +58,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const notifCount = useNotifCount();
+  const { user, logout } = useAuth();
+
+  const initials = user?.full_name
+    ? user.full_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+    : user?.email.slice(0, 2).toUpperCase();
 
   const titles: Record<string, string> = {
     '/': 'Дашборд',
@@ -109,11 +122,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         <div className="sidebar-footer">
           <div className="user-row">
-            <div className="avatar">АД</div>
-            <div>
-              <div className="user-name">Администратор</div>
-              <div className="user-role">Управляющий</div>
+            <div className="avatar">{initials}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="user-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {user?.full_name || user?.email}
+              </div>
+              <div className="user-role">{roleLabel[user?.role || ''] || user?.role}</div>
             </div>
+            <button
+              onClick={logout}
+              title="Выйти"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 4, flexShrink: 0 }}
+            >
+              <i className="ti ti-logout" style={{ fontSize: 16 }} />
+            </button>
           </div>
         </div>
       </nav>
